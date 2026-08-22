@@ -1,0 +1,156 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.admin == true || request.auth.token.email == 'admin@agrichain.com');
+    }
+
+    function ownerMatchesResource() {
+      return resource != null && resource.data.firebaseUid == request.auth.uid;
+    }
+
+    function ownerMatchesRequest() {
+      return request.resource.data.firebaseUid == request.auth.uid;
+    }
+
+    // Users: allow public reads for signup/signin checks, restrict writes to owners/admins
+    match /users/{userId} {
+      allow get, list: if true;
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin() || request.auth.uid == userId;
+    }
+
+    // Profiles: owner or admin access
+    match /profiles/{userId} {
+      allow get, list: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && request.auth.uid == userId && request.resource.data.firebaseUid == resource.data.firebaseUid;
+      allow delete: if isAdmin() || request.auth.uid == userId;
+    }
+
+    // Profile data: owner or admin access
+    match /profile_data/{profileId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && ownerMatchesRequest();
+      allow update: if isSignedIn() && ownerMatchesResource() && request.resource.data.firebaseUid == resource.data.firebaseUid;
+      allow delete: if isAdmin() || ownerMatchesResource();
+    }
+
+    // Crops: public reads (marketplace), writes by owner/admin
+    match /crops/{cropId} {
+      allow get, list: if true;
+      allow create: if isSignedIn() && request.resource.data.farmerId == request.auth.uid;
+      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.farmerId == request.auth.uid);
+    }
+
+    // Orders: reads by buyer or seller, writes by buyer/admin
+    match /orders/{orderId} {
+      allow get, list: if isSignedIn() && (
+        resource == null || 
+        resource.data.buyerId == request.auth.uid || 
+        resource.data.sellerId == request.auth.uid || 
+        resource.data.buyerFirebaseUid == request.auth.uid || 
+        resource.data.sellerFirebaseUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() && (
+        request.resource.data.buyerId == request.auth.uid ||
+        request.resource.data.buyerFirebaseUid == request.auth.uid
+      );
+      allow update: if isAdmin() || (isSignedIn() && (
+        resource.data.buyerId == request.auth.uid || 
+        resource.data.sellerId == request.auth.uid ||
+        resource.data.buyerFirebaseUid == request.auth.uid || 
+        resource.data.sellerFirebaseUid == request.auth.uid
+      ));
+      allow delete: if isAdmin();
+    }
+
+    // Contracts: owner can read their own contracts
+    match /contracts/{contractId} {
+      allow get, list: if isSignedIn() && (
+        resource == null || 
+        resource.data.userFirebaseUid == request.auth.uid || 
+        isAdmin()
+      );
+      allow create: if isSignedIn() && request.resource.data.userFirebaseUid == request.auth.uid;
+      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.userFirebaseUid == request.auth.uid);
+    }
+
+    // Loan requests: signed-in users
+    match /loan_requests/{loanRequestId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    // Loan offers: signed-in users
+    match /loan_offers/{offerId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    // Loans: signed-in users
+    match /loans/{loanId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    // Transactions: signed-in users
+    match /transactions/{transactionId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    // Security logs: admin, or owner if firebaseUid matches
+    match /security_logs/{logId} {
+      allow create: if isSignedIn();
+      allow get, list: if isAdmin() || (isSignedIn() && ownerMatchesResource());
+      allow update, delete: if isAdmin();
+    }
+
+    // Sessions: owner or admin
+    match /sessions/{sessionId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin() || (isSignedIn() && ownerMatchesResource());
+    }
+
+    // App config: read by signed-in users, write by admin
+    match /app_config/{configId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // KYC data: signed-in users can create/read/update their own
+    match /kyc_data/{kycId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Ratings: signed-in users
+    match /ratings/{ratingId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    // Rating stats: signed-in users
+    match /rating_stats/{statId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    // Auctions: public reads, writes by owner/admin if firebaseUid is present
+    match /auctions/{auctionId} {
+      allow get, list: if true;
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin() || ownerMatchesResource();
+    }
+  }
+}

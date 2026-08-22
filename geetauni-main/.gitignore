@@ -1,0 +1,63 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+.pub/
+build/
+flutter_*.log
+*.iml
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Android
+android/app/build/
+android/.gradle/
+android/local.properties
+android/key.properties
+*.jks
+*.keystore
+
+# iOS
+ios/Pods/
+ios/Runner.xcworkspace/xcuserdata/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# Web
+web/build/
+
+# macOS
+macos/Flutter/ephemeral/
+macos/.pub-cache/
+
+# Windows
+windows/flutter/ephemeral/
+windows/.pub-cache/
+
+# Linux
+linux/flutter/ephemeral/
+linux/.pub-cache/
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+
+# Environment
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# IDE
+.DS_Store
+Thumbs.db
+.vercel
+.env*.local

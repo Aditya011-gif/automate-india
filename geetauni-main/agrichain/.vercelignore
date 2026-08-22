@@ -1,0 +1,14 @@
+# Ignore local Flutter build artifact and cache directories
+.dart_tool/
+build/
+
+# Ignore non-web platform folders to reduce upload size
+android/
+ios/
+linux/
+macos/
+windows/
+
+# Ignore local environment files and Vercel cache
+.vercel/
+.env*.local
