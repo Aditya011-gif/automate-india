@@ -635,6 +635,16 @@ async function saveAndConfirmCropListing(from, farmer, details) {
 // ---------------------------------------------------------------------------
 // 9. Health Check Endpoint
 // ---------------------------------------------------------------------------
+app.get('/diag', (req, res) => {
+  res.json({
+    hasToken: !!process.env.WHATSAPP_TOKEN,
+    tokenPrefix: process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.slice(0, 10) : 'MISSING',
+    phoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || 'MISSING',
+    hasGemini: !!process.env.GEMINI_API_KEY,
+    hasFirebase: !!process.env.FIREBASE_PROJECT_ID
+  });
+});
+
 app.get('/', (req, res) => {
   res.json({
     status: 'ONLINE',
