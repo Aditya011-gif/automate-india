@@ -11,7 +11,7 @@ class WhatsAppKisanService {
   WhatsAppKisanService._internal();
 
   static const String _botNumberKey = 'agrichain_whatsapp_bot_number';
-  static const String defaultBotNumber = '918307165924'; // Default to configured gateway
+  static const String defaultBotNumber = '15556707125'; // Official Meta Cloud API Bot Number
 
   /// Gets the currently configured AgriChain WhatsApp Bot Phone Number (with country code, no +)
   Future<String> getBotNumber() async {
