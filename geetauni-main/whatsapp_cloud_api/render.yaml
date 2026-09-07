@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     region: oregon
-    rootDir: whatsapp_cloud_api
+    rootDir: geetauni-main/whatsapp_cloud_api
     buildCommand: npm install
     startCommand: node server.js
     envVars:
