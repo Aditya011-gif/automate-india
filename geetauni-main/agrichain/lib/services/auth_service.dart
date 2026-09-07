@@ -96,8 +96,8 @@ class AuthService {
         throw Exception('Failed to create Firebase user');
       }
 
-      // Generate unique user ID
-      final userId = _generateUserId();
+      // Set user ID to Firebase Auth UID
+      final userId = firebaseUser.uid;
       final now = DateTime.now().toIso8601String();
 
       // Prepare user data for Firestore
@@ -124,8 +124,8 @@ class AuthService {
         'lockoutUntil': null,
       };
 
-      // Store user data in Firestore
-      await _firestore.collection(_usersCollection).doc(userId).set(userData);
+      // Store user data in Firestore directly using Firebase UID as doc ID
+      await _firestore.collection(_usersCollection).doc(firebaseUser.uid).set(userData);
 
       // Update Firebase user profile
       await firebaseUser.updateDisplayName('$firstName $lastName');
@@ -194,19 +194,29 @@ class AuthService {
         throw Exception('Failed to sign in');
       }
 
-      // Get user data from Firestore
-      final userDoc = await _firestore
+      // Get user data from Firestore directly by UID
+      var docSnapshot = await _firestore
           .collection(_usersCollection)
-          .where('firebaseUid', isEqualTo: firebaseUser.uid)
-          .limit(1)
+          .doc(firebaseUser.uid)
           .get();
 
-      if (userDoc.docs.isEmpty) {
+      Map<String, dynamic>? userDataFromFirestore = docSnapshot.data();
+      if (userDataFromFirestore == null) {
+        final userDoc = await _firestore
+            .collection(_usersCollection)
+            .where('firebaseUid', isEqualTo: firebaseUser.uid)
+            .limit(1)
+            .get();
+        if (userDoc.docs.isNotEmpty) {
+          userDataFromFirestore = userDoc.docs.first.data();
+        }
+      }
+
+      if (userDataFromFirestore == null) {
         throw Exception('User data not found');
       }
 
-      final userDataFromFirestore = userDoc.docs.first.data();
-      final userId = userDataFromFirestore['id'];
+      final userId = userDataFromFirestore['id'] ?? firebaseUser.uid;
 
       // Update login information
       final now = DateTime.now().toIso8601String();

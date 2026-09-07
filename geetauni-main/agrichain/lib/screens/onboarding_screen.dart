@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:agrichain/l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../widgets/language_switcher.dart';
 
 class OnboardingScreen extends StatefulWidget {
   final VoidCallback onComplete;
@@ -19,53 +21,40 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  final List<OnboardingData> _onboardingData = [
+  List<OnboardingData> _getOnboardingData(AppLocalizations? l10n) => [
     OnboardingData(
-      title: 'Blockchain-Powered Agriculture',
-      subtitle: 'Secure, transparent, and traceable agricultural transactions',
-      description:
+      title: l10n?.onboardingTitle1 ?? 'Direct Agricultural Marketplace',
+      subtitle: l10n?.marketplaceSubtitle ?? 'Connect directly with buyers and sellers',
+      description: l10n?.onboardingDesc1 ??
           'Experience the future of farming with blockchain technology that ensures every transaction is secure and verifiable.',
-      icon: Icons.security,
+      icon: Icons.store,
       gradient: [AppTheme.primaryColor, AppTheme.primaryVariant],
       features: [
-        'Secure Transactions',
-        'Transparent Records',
-        'Immutable Data',
+        'Direct Trading',
+        'Transparent Pricing',
+        'Quality Assurance',
       ],
     ),
     OnboardingData(
-      title: 'Smart Marketplace',
-      subtitle: 'Connect directly with buyers and sellers',
-      description:
-          'Join our intelligent marketplace where farmers and buyers connect seamlessly with fair pricing and quality assurance.',
-      icon: Icons.store,
+      title: l10n?.onboardingTitle2 ?? 'AI Land Intelligence & Agri-Score',
+      subtitle: l10n?.landAnalysisDesc ?? 'Evaluate satellite vegetation, soil parameters, and ML yield predictions',
+      description: l10n?.onboardingDesc2 ??
+          'Leverage satellite NDVI, soil data, and machine learning to build instant trust with buyers.',
+      icon: Icons.satellite_alt,
       gradient: [AppTheme.secondaryColor, AppTheme.secondaryVariant],
-      features: ['Direct Trading', 'Fair Pricing', 'Quality Assurance'],
+      features: ['Satellite NDVI', 'Soil Intelligence', 'Trust Score'],
     ),
     OnboardingData(
-      title: 'NFT Crop Certificates',
-      subtitle: 'Digital ownership and authenticity',
-      description:
-          'Mint unique NFT certificates for your crops, proving authenticity and ownership while adding value to your produce.',
-      icon: Icons.verified,
-      gradient: [AppTheme.info, Color(0xFF1976D2)],
-      features: [
-        'Digital Certificates',
-        'Proof of Authenticity',
-        'Added Value',
-      ],
-    ),
-    OnboardingData(
-      title: 'Financial Services',
-      subtitle: 'Loans, payments, and financial growth',
-      description:
-          'Access agricultural loans, secure payments, and comprehensive financial tools designed for modern farming.',
+      title: l10n?.onboardingTitle3 ?? 'Instant DeFi Micro-Loans',
+      subtitle: l10n?.loanSectionSubtitle ?? 'Get instant loans backed by crop & land collateral',
+      description: l10n?.onboardingDesc3 ??
+          'Unlock flexible financing against your listed crops with transparent smart contracts.',
       icon: Icons.account_balance_wallet,
-      gradient: [AppTheme.success, Color(0xFF388E3C)],
+      gradient: [AppTheme.info, const Color(0xFF1976D2)],
       features: [
-        'Agricultural Loans',
-        'Secure Payments',
-        'Financial Analytics',
+        'Crop Micro-Loans',
+        'Transparent Rates',
+        'Fast Disbursal',
       ],
     ),
   ];
@@ -97,8 +86,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     super.dispose();
   }
 
-  void _nextPage() {
-    if (_currentPage < _onboardingData.length - 1) {
+  void _nextPage(int dataLength) {
+    if (_currentPage < dataLength - 1) {
       _pageController.nextPage(
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
@@ -127,27 +116,34 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final onboardingData = _getOnboardingData(l10n);
+
+    if (_currentPage >= onboardingData.length) {
+      _currentPage = 0;
+    }
+
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: _onboardingData[_currentPage].gradient,
+            colors: onboardingData[_currentPage].gradient,
           ),
         ),
         child: SafeArea(
           child: Column(
             children: [
-              // Skip Button
+              // Top Bar with Language Switcher and Skip
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const SizedBox(width: 60),
+                    const LanguageSwitcherPill(isDark: true),
                     Text(
-                      'AgriChain',
+                      l10n?.appTitle ?? 'AgriChain',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         color: AppTheme.white,
                         fontWeight: FontWeight.bold,
@@ -156,7 +152,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     TextButton(
                       onPressed: _skipOnboarding,
                       child: Text(
-                        'Skip',
+                        l10n?.skip ?? 'Skip',
                         style: TextStyle(
                           color: AppTheme.white.withOpacity(0.8),
                           fontSize: 16,
@@ -174,7 +170,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: List.generate(
-                    _onboardingData.length,
+                    onboardingData.length,
                     (index) => AnimatedContainer(
                       duration: const Duration(milliseconds: 300),
                       margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -203,13 +199,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     _animationController.forward();
                     HapticFeedback.lightImpact();
                   },
-                  itemCount: _onboardingData.length,
+                  itemCount: onboardingData.length,
                   itemBuilder: (context, index) {
                     return FadeTransition(
                       opacity: _fadeAnimation,
                       child: SlideTransition(
                         position: _slideAnimation,
-                        child: _buildOnboardingPage(_onboardingData[index]),
+                        child: _buildOnboardingPage(onboardingData[index]),
                       ),
                     );
                   },
@@ -230,20 +226,20 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                               Icons.arrow_back,
                               color: AppTheme.white,
                             ),
-                            label: const Text(
-                              'Previous',
-                              style: TextStyle(color: AppTheme.white),
+                            label: Text(
+                              l10n?.back ?? 'Previous',
+                              style: const TextStyle(color: AppTheme.white),
                             ),
                           )
                         : const SizedBox(width: 100),
 
                     // Next/Get Started Button
                     ElevatedButton(
-                      onPressed: _nextPage,
+                      onPressed: () => _nextPage(onboardingData.length),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.white,
                         foregroundColor:
-                            _onboardingData[_currentPage].gradient[0],
+                            onboardingData[_currentPage].gradient[0],
                         padding: const EdgeInsets.symmetric(
                           horizontal: 32,
                           vertical: 16,
@@ -257,9 +253,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            _currentPage == _onboardingData.length - 1
-                                ? 'Get Started'
-                                : 'Next',
+                            _currentPage == onboardingData.length - 1
+                                ? (l10n?.getStarted ?? 'Get Started')
+                                : (l10n?.next ?? 'Next'),
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -267,7 +263,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                           ),
                           const SizedBox(width: 8),
                           Icon(
-                            _currentPage == _onboardingData.length - 1
+                            _currentPage == onboardingData.length - 1
                                 ? Icons.rocket_launch
                                 : Icons.arrow_forward,
                           ),

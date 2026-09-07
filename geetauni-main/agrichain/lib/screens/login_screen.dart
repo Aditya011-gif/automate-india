@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
+import 'package:agrichain/l10n/app_localizations.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../models/firestore_models.dart';
+import '../widgets/language_switcher.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -21,7 +24,6 @@ class _LoginScreenState extends State<LoginScreen>
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
-  String _selectedUserType = 'farmer';
 
   late AnimationController _animationController;
   late AnimationController _buttonAnimationController;
@@ -162,6 +164,7 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final l10n = AppLocalizations.of(context);
 
     return Scaffold(
       body: Container(
@@ -211,12 +214,19 @@ class _LoginScreenState extends State<LoginScreen>
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                // Language Switcher at Top
+                                Align(
+                                  alignment: Alignment.topRight,
+                                  child: LanguageSwitcherPill(isDark: isDark),
+                                ),
+                                const SizedBox(height: 8),
+
                                 // Logo and Title
                                 Container(
                                   width: 80,
                                   height: 80,
                                   decoration: BoxDecoration(
-                                    gradient: LinearGradient(
+                                    gradient: const LinearGradient(
                                       colors: [
                                         AppTheme.primaryColor,
                                         AppTheme.secondaryColor,
@@ -240,7 +250,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 ),
                                 const SizedBox(height: 24),
                                 Text(
-                                  'Welcome Back',
+                                  l10n?.welcomeBack ?? 'Welcome Back',
                                   style: Theme.of(context)
                                       .textTheme
                                       .headlineMedium
@@ -253,7 +263,8 @@ class _LoginScreenState extends State<LoginScreen>
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Sign in to continue to AgriChain',
+                                  l10n?.tagline ?? 'Sign in to continue to AgriChain',
+                                  textAlign: TextAlign.center,
                                   style: Theme.of(context).textTheme.bodyLarge
                                       ?.copyWith(
                                         color: isDark
@@ -261,47 +272,14 @@ class _LoginScreenState extends State<LoginScreen>
                                             : AppTheme.textSecondary,
                                       ),
                                 ),
-                                const SizedBox(height: 32),
+                                const SizedBox(height: 24),
 
-                                // User Type Selection
-                                Text(
-                                  'I am a:',
-                                  style: Theme.of(context).textTheme.titleMedium
-                                      ?.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                        color: isDark
-                                            ? AppTheme.white
-                                            : AppTheme.textPrimary,
-                                      ),
-                                ),
-                                const SizedBox(height: 16),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: _buildUserTypeCard(
-                                        'farmer',
-                                        'Farmer',
-                                        Icons.agriculture,
-                                        isDark,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: _buildUserTypeCard(
-                                        'buyer',
-                                        'Buyer',
-                                        Icons.shopping_cart,
-                                        isDark,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 32),
+                                // Email Field
 
                                 // Email Field
                                 _buildTextField(
                                   controller: _emailController,
-                                  label: 'Email Address',
+                                  label: l10n?.email ?? 'Email Address',
                                   icon: Icons.email_outlined,
                                   keyboardType: TextInputType.emailAddress,
                                   validator: (value) {
@@ -322,7 +300,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 // Password Field
                                 _buildTextField(
                                   controller: _passwordController,
-                                  label: 'Password',
+                                  label: l10n?.password ?? 'Password',
                                   icon: Icons.lock_outline,
                                   obscureText: _obscurePassword,
                                   suffixIcon: IconButton(
@@ -376,7 +354,7 @@ class _LoginScreenState extends State<LoginScreen>
                                           ),
                                           child: Row(
                                             children: [
-                                              Icon(
+                                              const Icon(
                                                 Icons.error_outline,
                                                 color: AppTheme.error,
                                                 size: 20,
@@ -385,7 +363,7 @@ class _LoginScreenState extends State<LoginScreen>
                                               Expanded(
                                                 child: Text(
                                                   _errorMessage!,
-                                                  style: TextStyle(
+                                                  style: const TextStyle(
                                                     color: AppTheme.error,
                                                     fontWeight: FontWeight.w500,
                                                   ),
@@ -434,13 +412,13 @@ class _LoginScreenState extends State<LoginScreen>
                                             ),
                                           ),
                                           child: _isLoading
-                                              ? SizedBox(
+                                              ? const SizedBox(
                                                   width: 24,
                                                   height: 24,
                                                   child: CircularProgressIndicator(
                                                     strokeWidth: 2.5,
                                                     valueColor:
-                                                        const AlwaysStoppedAnimation<
+                                                        AlwaysStoppedAnimation<
                                                           Color
                                                         >(AppTheme.white),
                                                   ),
@@ -449,9 +427,9 @@ class _LoginScreenState extends State<LoginScreen>
                                                   mainAxisAlignment:
                                                       MainAxisAlignment.center,
                                                   children: [
-                                                    const Text(
-                                                      'Sign In',
-                                                      style: TextStyle(
+                                                    Text(
+                                                      l10n?.login ?? 'Sign In',
+                                                      style: const TextStyle(
                                                         fontSize: 16,
                                                         fontWeight:
                                                             FontWeight.w600,
@@ -477,8 +455,8 @@ class _LoginScreenState extends State<LoginScreen>
                                     // TODO: Implement forgot password
                                   },
                                   child: Text(
-                                    'Forgot Password?',
-                                    style: TextStyle(
+                                    l10n?.forgotPassword ?? 'Forgot Password?',
+                                    style: const TextStyle(
                                       color: AppTheme.primaryColor,
                                       fontWeight: FontWeight.w500,
                                     ),
@@ -491,7 +469,7 @@ class _LoginScreenState extends State<LoginScreen>
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     Text(
-                                      "Don't have an account? ",
+                                      l10n?.dontHaveAccount ?? "Don't have an account? ",
                                       style: TextStyle(
                                         color: isDark
                                             ? AppTheme.textSecondary
@@ -540,6 +518,29 @@ class _LoginScreenState extends State<LoginScreen>
                                     ),
                                   ],
                                 ),
+                                const SizedBox(height: 20),
+                                const Divider(),
+                                const SizedBox(height: 12),
+                                Text(
+                                  '⚡ 1-Tap Demo Testing (Jump to Any Role)',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: isDark ? Colors.white70 : AppTheme.darkGreen,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  alignment: WrapAlignment.center,
+                                  children: [
+                                    _buildDemoChip(context, '🌾 Farmer', UserType.farmer),
+                                    _buildDemoChip(context, '🏢 FPO Co-op', UserType.fpo),
+                                    _buildDemoChip(context, '🏭 Bulk Buyer', UserType.buyer),
+                                    _buildDemoChip(context, '🛒 Retail Buyer', UserType.retailBuyer),
+                                  ],
+                                ),
                               ],
                             ),
                           ),
@@ -553,6 +554,18 @@ class _LoginScreenState extends State<LoginScreen>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildDemoChip(BuildContext context, String label, UserType role) {
+    return ActionChip(
+      label: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+      backgroundColor: AppTheme.primaryGreen.withValues(alpha: 0.1),
+      side: const BorderSide(color: AppTheme.primaryGreen),
+      onPressed: () {
+        final appState = Provider.of<AppState>(context, listen: false);
+        appState.setDemoUserRole(role);
+      },
     );
   }
 
@@ -614,78 +627,6 @@ class _LoginScreenState extends State<LoginScreen>
         ),
       ),
       validator: validator,
-    );
-  }
-
-  Widget _buildUserTypeCard(
-    String value,
-    String label,
-    IconData icon,
-    bool isDark,
-  ) {
-    final isSelected = _selectedUserType == value;
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _selectedUserType = value;
-        });
-        HapticFeedback.selectionClick();
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? AppTheme.primaryColor.withOpacity(0.1)
-              : isDark
-              ? AppTheme.darkSurface.withOpacity(0.5)
-              : AppTheme.neutral100,
-          border: Border.all(
-            color: isSelected
-                ? AppTheme.primaryColor
-                : isDark
-                ? AppTheme.neutral600
-                : AppTheme.neutral300,
-            width: isSelected ? 2 : 1,
-          ),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: AppTheme.primaryColor.withOpacity(0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ]
-              : null,
-        ),
-        child: Column(
-          children: [
-            Icon(
-              icon,
-              size: 32,
-              color: isSelected
-                  ? AppTheme.primaryColor
-                  : isDark
-                  ? AppTheme.textSecondary
-                  : AppTheme.textSecondary,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-                color: isSelected
-                    ? AppTheme.primaryColor
-                    : isDark
-                    ? AppTheme.textSecondary
-                    : AppTheme.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

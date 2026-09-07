@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../providers/app_state.dart';
 import '../models/firestore_models.dart';
+import 'package:agrichain/l10n/app_localizations.dart';
+import '../utils/translation_helper.dart';
+import '../widgets/language_switcher.dart';
 import '../widgets/shimmer_loading.dart';
 import '../widgets/enhanced_loan_request_dialog.dart';
 import '../services/download_service.dart';
@@ -36,6 +39,8 @@ class _LoansScreenState extends State<LoansScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
     return Consumer<AppState>(
       builder: (context, appState, child) {
         final isFarmer = appState.currentUser?.userType == UserType.farmer;
@@ -43,15 +48,21 @@ class _LoansScreenState extends State<LoansScreen>
         return Scaffold(
           backgroundColor: const Color(0xFFF8F9FA),
           appBar: AppBar(
-            title: const Text(
-              'Loan Services',
-              style: TextStyle(
+            title: Text(
+              l10n?.loanSectionTitle ?? 'Loan Services',
+              style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
             ),
             backgroundColor: const Color(0xFF2E7D32),
             elevation: 0,
+            actions: const [
+              Padding(
+                padding: EdgeInsets.only(right: 8),
+                child: Center(child: LanguageSwitcherPill(isDark: true)),
+              ),
+            ],
             bottom: TabBar(
               controller: _tabController,
               indicatorColor: Colors.white,
@@ -59,11 +70,15 @@ class _LoansScreenState extends State<LoansScreen>
               unselectedLabelColor: Colors.white70,
               tabs: [
                 Tab(
-                  text: isFarmer ? 'My Loan Requests' : 'Browse Requests',
+                  text: isFarmer
+                      ? (appState.locale.languageCode == 'hi' ? 'मेरे ऋण अनुरोध' : 'My Loan Requests')
+                      : (appState.locale.languageCode == 'hi' ? 'अनुरोध ब्राउज़ करें' : 'Browse Requests'),
                   icon: Icon(isFarmer ? Icons.request_page : Icons.search),
                 ),
                 Tab(
-                  text: isFarmer ? 'Loan Offers' : 'My Offers',
+                  text: isFarmer
+                      ? (appState.locale.languageCode == 'hi' ? 'ऋण प्रस्ताव' : 'Loan Offers')
+                      : (appState.locale.languageCode == 'hi' ? 'मेरे प्रस्ताव' : 'My Offers'),
                   icon: Icon(isFarmer ? Icons.local_offer : Icons.handshake),
                 ),
               ],
@@ -83,9 +98,9 @@ class _LoansScreenState extends State<LoansScreen>
                   onPressed: () => _showEnhancedLoanRequestDialog(context),
                   backgroundColor: const Color(0xFF2E7D32),
                   icon: const Icon(Icons.add, color: Colors.white),
-                  label: const Text(
-                    'Add Loan Request',
-                    style: TextStyle(color: Colors.white),
+                  label: Text(
+                    l10n?.requestNewLoan ?? 'Add Loan Request',
+                    style: const TextStyle(color: Colors.white),
                   ),
                 )
               : null,
@@ -270,6 +285,9 @@ class _LoansScreenState extends State<LoansScreen>
     Map<String, dynamic> data, {
     required bool isOwner,
   }) {
+    final l10n = AppLocalizations.of(context);
+    final isHindi = Localizations.localeOf(context).languageCode == 'hi';
+
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       elevation: 2,
@@ -292,7 +310,7 @@ class _LoansScreenState extends State<LoansScreen>
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      (data['status'] ?? 'active').toUpperCase(),
+                      TranslationHelper.translateLoanStatus(context, data['status']),
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -315,9 +333,9 @@ class _LoansScreenState extends State<LoansScreen>
                         color: Colors.red,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Text(
-                        'URGENT',
-                        style: TextStyle(
+                      child: Text(
+                        isHindi ? 'अति आवश्यक' : 'URGENT',
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 10,
                           fontWeight: FontWeight.bold,
@@ -360,7 +378,7 @@ class _LoansScreenState extends State<LoansScreen>
               children: [
                 Expanded(
                   child: _buildInfoItem(
-                    'Loan Amount',
+                    l10n?.loanAmount ?? 'Loan Amount',
                     '₹${data['loanAmount']?.toString() ?? '0'}',
                     Icons.currency_rupee,
                   ),
@@ -368,8 +386,14 @@ class _LoansScreenState extends State<LoansScreen>
                 const SizedBox(width: 8),
                 Expanded(
                   child: _buildInfoItem(
-                    'Purpose',
-                    data['purpose'] ?? 'General',
+                    l10n?.loanPurpose ?? 'Purpose',
+                    isHindi
+                        ? (data['purpose'] == 'Seeds & Fertilizers'
+                            ? 'बीज और उर्वरक'
+                            : (data['purpose'] == 'Machinery'
+                                ? 'मशीनरी'
+                                : (data['purpose'] ?? 'सामान्य')))
+                        : (data['purpose'] ?? 'General'),
                     Icons.agriculture,
                   ),
                 ),
@@ -380,7 +404,7 @@ class _LoansScreenState extends State<LoansScreen>
               children: [
                 Expanded(
                   child: _buildInfoItem(
-                    'Expected ROI',
+                    l10n?.expectedRoi ?? 'Expected ROI',
                     data['expectedROI'] ?? 'N/A',
                     Icons.trending_up,
                   ),
@@ -388,8 +412,10 @@ class _LoansScreenState extends State<LoansScreen>
                 const SizedBox(width: 8),
                 Expanded(
                   child: _buildInfoItem(
-                    'Repayment',
-                    data['repaymentPeriod'] ?? 'N/A',
+                    l10n?.repaymentPeriod ?? 'Repayment',
+                    isHindi && data['repaymentPeriod'] != null && data['repaymentPeriod'].toString().contains('months')
+                        ? data['repaymentPeriod'].toString().replaceAll('months', 'महीने')
+                        : (data['repaymentPeriod'] ?? 'N/A'),
                     Icons.schedule,
                   ),
                 ),
@@ -411,7 +437,7 @@ class _LoansScreenState extends State<LoansScreen>
               child: OutlinedButton.icon(
                 onPressed: () => _downloadLoanContract(data),
                 icon: const Icon(Icons.download, size: 16),
-                label: const Text('Loan Contract'),
+                label: Text(l10n?.loanContract ?? 'Loan Contract'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF2E7D32),
                   side: const BorderSide(color: Color(0xFF2E7D32)),
@@ -432,7 +458,7 @@ class _LoansScreenState extends State<LoansScreen>
                     ),
                   ),
                   icon: const Icon(Icons.handshake),
-                  label: const Text('Make Offer'),
+                  label: Text(l10n?.makeOffer ?? 'Make Offer'),
                 ),
               ),
           ],

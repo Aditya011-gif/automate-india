@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/firestore_models.dart';
 import '../services/database_service.dart';
 import '../services/auth_service.dart';
@@ -16,6 +17,10 @@ class AppState extends ChangeNotifier {
   User? _firebaseUser;
   bool _isLoading = false;
   String? _error;
+
+  // Language & Locale state
+  Locale _locale = const Locale('en');
+  Locale get locale => _locale;
 
   // Data collections
   List<FirestoreCrop> _crops = [];
@@ -35,6 +40,9 @@ class AppState extends ChangeNotifier {
   String get userName => _currentUser?.name ?? 'Guest';
   double get walletBalance => _currentUser?.walletBalance ?? 0.0;
   String? get userLocation => _currentUser?.location;
+  bool get isDemoAccount =>
+      _currentUser?.metadata['isDemoAccount'] == true ||
+      (_currentUser?.id.startsWith('demo_') ?? false);
 
   List<FirestoreCrop> get crops => _crops;
   List<FirestoreLoan> get loans => _loans;
@@ -57,6 +65,9 @@ class AppState extends ChangeNotifier {
   Future<void> initialize() async {
     _setLoading(true);
     try {
+      // Load saved language preference
+      await loadLocale();
+
       // Listen to auth state changes
       _auth.authStateChanges().listen(_onAuthStateChanged);
 
@@ -71,6 +82,40 @@ class AppState extends ChangeNotifier {
       _setError('Failed to initialize app: $e');
     } finally {
       _setLoading(false);
+    }
+  }
+
+  // Language management methods
+  Future<void> loadLocale() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final code = prefs.getString('selected_language_code');
+      if (code != null && (code == 'en' || code == 'hi')) {
+        _locale = Locale(code);
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error loading saved locale: $e');
+    }
+  }
+
+  Future<void> setLocale(Locale newLocale) async {
+    if (_locale == newLocale) return;
+    _locale = newLocale;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('selected_language_code', newLocale.languageCode);
+    } catch (e) {
+      debugPrint('Error saving locale preference: $e');
+    }
+  }
+
+  void toggleLanguage() {
+    if (_locale.languageCode == 'en') {
+      setLocale(const Locale('hi'));
+    } else {
+      setLocale(const Locale('en'));
     }
   }
 
@@ -97,33 +142,32 @@ class AppState extends ChangeNotifier {
     try {
       debugPrint('🔍 Loading user data for Firebase UID: $firebaseUid');
 
-      // Retry logic in case of race condition between signup and login
-      Map<String, dynamic>? userData;
-      int retries = 15;
+      // Direct user data lookup from Firestore
+      Map<String, dynamic>? userData = await _databaseService.getUserByFirebaseUid(firebaseUid);
 
-      while (retries > 0 && userData == null) {
+      // Brief single retry only if brand new registration write is finishing
+      if (userData == null) {
+        await Future.delayed(const Duration(milliseconds: 300));
         userData = await _databaseService.getUserByFirebaseUid(firebaseUid);
-        if (userData == null) {
-          debugPrint(
-            '⏳ User data not found, retrying... ($retries attempts left)',
-          );
-          await Future.delayed(const Duration(seconds: 1));
-          retries--;
-        }
       }
 
       if (userData != null) {
         debugPrint('✅ User data loaded successfully: ${userData['email']}');
         final userTypeString = userData['userType'] as String? ?? 'farmer';
         _currentUser = FirestoreUser(
-          id: userData['id'] ?? '',
+          id: userData['id'] ?? firebaseUid,
           name: userData['firstName'] != null && userData['lastName'] != null
               ? '${userData['firstName']} ${userData['lastName']}'
               : userData['name'] ?? '',
           email: userData['email'] ?? '',
           phone: userData['phone'],
           userType: UserType.values.firstWhere(
-            (e) => e.name == userTypeString,
+            (e) {
+              final str = userTypeString.toLowerCase();
+              if (e == UserType.retailBuyer && (str == 'retailbuyer' || str == 'retail_buyer')) return true;
+              if (e == UserType.buyer && (str == 'buyer' || str == 'bulk_buyer' || str == 'bulkbuyer')) return true;
+              return e.name.toLowerCase() == str;
+            },
             orElse: () => UserType.farmer,
           ),
           location: userData['location'],
@@ -145,7 +189,7 @@ class AppState extends ChangeNotifier {
         );
       } else {
         debugPrint(
-          '❌ User data not found after retries for Firebase UID: $firebaseUid',
+          '❌ User profile not found in Firestore for Firebase UID: $firebaseUid',
         );
         _setError('User profile not found. Please complete your registration.');
       }
@@ -156,6 +200,42 @@ class AppState extends ChangeNotifier {
       _setLoading(false);
     }
   }
+
+  /// Instant 1-Tap Demo Role Login for Testing
+  void setDemoUserRole(UserType role) {
+    String name = 'Rajesh Kumar';
+    String email = 'farmer@agrichain.com';
+    double wallet = 45000.0;
+    if (role == UserType.fpo) {
+      name = 'Karnal Agro Producer Co.';
+      email = 'fpo@agrichain.com';
+      wallet = 1200000.0;
+    } else if (role == UserType.buyer) {
+      name = 'AgroFoods Milling India Pvt Ltd';
+      email = 'buyer@agrichain.com';
+      wallet = 15000000.0;
+    } else if (role == UserType.retailBuyer) {
+      name = 'Aryan Sharma';
+      email = 'retail@agrichain.com';
+      wallet = 25000.0;
+    }
+
+    _currentUser = FirestoreUser(
+      id: 'demo_${role.name}_001',
+      name: name,
+      email: email,
+      phone: '+91 98765 43210',
+      userType: role,
+      location: 'Karnal, Haryana',
+      walletBalance: wallet,
+      createdAt: DateTime.now(),
+      isActive: true,
+      metadata: {'isDemoAccount': true},
+    );
+    notifyListeners();
+    debugPrint('⚡ Logged in as Demo Role: ${_currentUser!.name} (${role.name})');
+  }
+
 
   // Load user-related data
   Future<void> _loadUserRelatedData() async {
@@ -193,7 +273,7 @@ class AppState extends ChangeNotifier {
       farmerName: data['farmerName'] ?? '',
       location: data['location'] ?? '',
       price: (data['price'] ?? 0.0).toDouble(),
-      quantity: data['quantity'] ?? '',
+      quantity: data['quantity']?.toString() ?? '',
       harvestDate: data['harvestDate'] is Timestamp
           ? (data['harvestDate'] as Timestamp).toDate()
           : DateTime.parse(
@@ -324,13 +404,15 @@ class AppState extends ChangeNotifier {
 
   Future<void> signOut() async {
     _setLoading(true);
+    _currentUser = null;
+    _firebaseUser = null;
     try {
       await _authService.signOut();
-      // Data will be cleared automatically via auth state change
     } catch (e) {
       _setError('Sign out failed: $e');
     } finally {
       _setLoading(false);
+      notifyListeners();
     }
   }
 
@@ -354,8 +436,9 @@ class AppState extends ChangeNotifier {
 
     _setLoading(true);
     try {
+      final docId = 'crop_${DateTime.now().millisecondsSinceEpoch}';
       final crop = FirestoreCrop(
-        id: '', // Will be set by Firestore
+        id: docId,
         name: name,
         farmerId: _currentUser!.id,
         farmerName: _currentUser!.name,
@@ -374,6 +457,10 @@ class AppState extends ChangeNotifier {
         signatureUrl: signatureUrl,
       );
 
+      // Instantly insert into local state
+      _crops.insert(0, crop);
+      notifyListeners();
+
       await _databaseService.createCrop(crop.toFirestore());
       await _loadUserRelatedData(); // Refresh data
       return true;
@@ -382,6 +469,31 @@ class AppState extends ChangeNotifier {
       return false;
     } finally {
       _setLoading(false);
+      notifyListeners();
+    }
+  }
+
+  /// Deduct purchased quantity from local in-memory crops
+  void deductCropQuantity(String cropId, String? cropName, double purchasedQty) {
+    if (purchasedQty <= 0) return;
+    for (int i = 0; i < _crops.length; i++) {
+      final c = _crops[i];
+      final matchesId = cropId.isNotEmpty && c.id == cropId;
+      final matchesName = cropName != null && cropName.isNotEmpty && (c.name.toLowerCase() == cropName.toLowerCase() || cropName.toLowerCase().contains(c.name.toLowerCase()));
+
+      if (matchesId || matchesName) {
+        final cleanStr = c.quantity.replaceAll(RegExp(r'[^0-9.]'), '');
+        final currentQty = double.tryParse(cleanStr) ?? 0.0;
+        final newQty = (currentQty - purchasedQty).clamp(0.0, double.infinity);
+
+        _crops[i] = c.copyWith(
+          quantity: '${newQty.toStringAsFixed(newQty.truncateToDouble() == newQty ? 0 : 1)} kg',
+          updatedAt: DateTime.now(),
+        );
+        notifyListeners();
+        debugPrint('✅ AppState: Deducted $purchasedQty kg from crop ${c.name}. Remaining: $newQty kg');
+        break;
+      }
     }
   }
 
@@ -405,6 +517,30 @@ class AppState extends ChangeNotifier {
       return true;
     } catch (e) {
       _setError('Failed to update wallet balance: $e');
+      return false;
+    }
+  }
+
+  /// Update user digital signature (Base64 or DigiLocker URL)
+  Future<bool> updateUserSignature(String signatureUrl) async {
+    if (_currentUser == null) return false;
+
+    try {
+      final updates = {
+        'signatureUrl': signatureUrl,
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
+
+      await _databaseService.updateUser(_currentUser!.id, updates);
+
+      _currentUser = _currentUser!.copyWith(
+        signatureUrl: signatureUrl,
+        updatedAt: DateTime.now(),
+      );
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _setError('Failed to update signature: $e');
       return false;
     }
   }
@@ -684,14 +820,16 @@ class AppState extends ChangeNotifier {
       _orders = allOrderDocs.values.map((doc) {
         final data = doc.data() as Map<String, dynamic>;
         return FirestoreOrder(
-          id: data['id'] ?? doc.id,
-          cropId: data['cropId'] ?? '',
-          quantity: data['quantity'] ?? '',
-          totalAmount: (data['totalAmount'] ?? 0.0).toDouble(),
-          buyerId: data['buyerId'] ?? '',
-          buyerName: data['buyerName'] ?? '',
-          sellerId: data['sellerId'] ?? '',
-          sellerName: data['sellerName'] ?? '',
+          id: data['id']?.toString() ?? doc.id,
+          cropId: data['cropId']?.toString() ?? '',
+          quantity: data['quantity']?.toString() ?? '',
+          totalAmount: (data['totalAmount'] is num)
+              ? (data['totalAmount'] as num).toDouble()
+              : (double.tryParse(data['totalAmount']?.toString() ?? '0') ?? 0.0),
+          buyerId: data['buyerId']?.toString() ?? '',
+          buyerName: data['buyerName']?.toString() ?? '',
+          sellerId: data['sellerId']?.toString() ?? '',
+          sellerName: data['sellerName']?.toString() ?? '',
           status: OrderStatus.values.firstWhere(
             (e) => e.name == data['status'],
             orElse: () => OrderStatus.pending,

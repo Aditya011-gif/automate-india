@@ -6,8 +6,8 @@ import '../models/land_nft.dart';
 import '../models/crop_nft.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
-import '../screens/mint_land_nft_screen.dart';
-import '../screens/mint_crop_nft_screen.dart';
+import '../screens/farmer/mint_land_nft_screen.dart';
+import '../screens/farmer/mint_crop_nft_screen.dart';
 
 class EnhancedLoanRequestDialog extends StatefulWidget {
   const EnhancedLoanRequestDialog({super.key});

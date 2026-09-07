@@ -584,12 +584,19 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
             TextFormField(
               controller: _businessNameController,
               decoration: _buildInputDecoration(
-                'Business/Company Name',
+                widget.userType == UserType.fpo
+                    ? 'FPO / Co-operative Name'
+                    : (widget.userType == UserType.retailBuyer
+                        ? 'Business / Display Name (Optional)'
+                        : 'Company / Business Name'),
                 Icons.business,
               ),
               validator: (value) {
+                if (widget.userType == UserType.retailBuyer) return null;
                 if (value == null || value.trim().isEmpty) {
-                  return 'Business name is required';
+                  return widget.userType == UserType.fpo
+                      ? 'FPO name is required'
+                      : 'Business name is required';
                 }
                 return null;
               },
@@ -598,7 +605,9 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
             TextFormField(
               controller: _gstController,
               decoration: _buildInputDecoration(
-                'GST Number (Optional)',
+                widget.userType == UserType.fpo
+                    ? 'CIN / Registration / GSTIN (Optional)'
+                    : 'GST Number (Optional)',
                 Icons.receipt,
               ),
               textCapitalization: TextCapitalization.characters,
@@ -845,6 +854,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
 
     if (widget.userType == UserType.farmer) {
       return baseValidation && _farmSizeController.text.trim().isNotEmpty;
+    } else if (widget.userType == UserType.retailBuyer) {
+      return baseValidation;
     } else {
       return baseValidation && _businessNameController.text.trim().isNotEmpty;
     }

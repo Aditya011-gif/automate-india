@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
-import '../models/crop.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../services/firebase_service.dart';
@@ -17,8 +16,8 @@ import 'payment_method_selector.dart';
 import 'package:printing/printing.dart';
 import 'package:uuid/uuid.dart';
 import '../models/firestore_models.dart';
-import '../screens/land_analysis_screen.dart';
-import '../screens/farmer_profile_screen.dart';
+import '../screens/farmer/land_analysis_screen.dart';
+import '../screens/retail_buyer/farmer_public_profile_screen.dart';
 
 class CropCard extends StatefulWidget {
   final FirestoreCrop crop;
@@ -204,7 +203,7 @@ class _CropCardState extends State<CropCard>
         filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          color: Colors.white.withOpacity(0.2),
+          color: Colors.white.withValues(alpha: 0.2),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -220,7 +219,7 @@ class _CropCardState extends State<CropCard>
                     Shadow(
                       offset: const Offset(0, 1),
                       blurRadius: 2,
-                      color: Colors.black.withOpacity(0.3),
+                      color: Colors.black.withValues(alpha: 0.3),
                     ),
                   ],
                 ),
@@ -352,7 +351,7 @@ class _CropCardState extends State<CropCard>
         child: Icon(
           _getCropIcon(widget.crop.name),
           size: 48,
-          color: Colors.white.withOpacity(0.3),
+          color: Colors.white.withValues(alpha: 0.3),
         ),
       ),
     );
@@ -430,11 +429,11 @@ class _CropCardState extends State<CropCard>
           ),
         ),
         const SizedBox(width: 4),
-        Flexible(
-          child: Text(
-            '/${widget.crop.quantity}',
-            style: theme.textTheme.labelSmall,
-            overflow: TextOverflow.ellipsis,
+        Text(
+          '/kg',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: AppTheme.textSecondary,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ],
@@ -538,7 +537,7 @@ class _CropDetailsSheet extends StatelessWidget {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 20,
             spreadRadius: 5,
           ),
@@ -553,7 +552,7 @@ class _CropDetailsSheet extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: AppTheme.textDisabled.withOpacity(0.3),
+                color: AppTheme.textDisabled.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -599,8 +598,8 @@ class _CropDetailsSheet extends StatelessWidget {
                                   vertical: 6,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: AppTheme.secondaryColor.withOpacity(
-                                    0.2,
+                                  color: AppTheme.secondaryColor.withValues(
+                                    alpha: 0.2,
                                   ),
                                   borderRadius: BorderRadius.circular(20),
                                   border: Border.all(
@@ -642,8 +641,8 @@ class _CropDetailsSheet extends StatelessWidget {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              _buildStat(context, 'Price', '₹${crop.price}'),
-                              _buildStat(context, 'Quantity', crop.quantity),
+                              _buildStat(context, 'Price', '₹${crop.price.toStringAsFixed(0)} / kg'),
+                              _buildStat(context, 'Quantity', '${crop.quantity.replaceAll(RegExp(r'[^0-9.]'), '')} kg'),
                               _buildStat(
                                 context,
                                 'Harvest',
@@ -675,11 +674,11 @@ class _CropDetailsSheet extends StatelessWidget {
                           contentPadding: EdgeInsets.zero,
                           leading: CircleAvatar(
                             radius: 24,
-                            backgroundColor: AppTheme.primaryColor.withOpacity(
-                              0.1,
+                            backgroundColor: AppTheme.primaryColor.withValues(
+                              alpha: 0.1,
                             ),
                             child: Text(
-                              crop.farmerName[0],
+                              crop.farmerName.isNotEmpty ? crop.farmerName[0] : 'F',
                               style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: AppTheme.primaryColor,
@@ -693,7 +692,7 @@ class _CropDetailsSheet extends StatelessWidget {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => FarmerProfileScreen(crop: crop),
+                                builder: (_) => FarmerPublicProfileScreen(crop: crop),
                               ),
                             );
                           },
@@ -764,7 +763,7 @@ class _CropDetailsSheet extends StatelessWidget {
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 10,
                   offset: const Offset(0, -5),
                 ),
@@ -939,7 +938,7 @@ class _CropDetailsSheet extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withOpacity(0.1),
+                      color: AppTheme.primaryColor.withValues(alpha: 0.1),
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(20),
                       ),
@@ -1275,7 +1274,7 @@ class _CropDetailsSheet extends StatelessWidget {
         farmerName: crop.farmerName,
         buyerName: currentUser.name,
         cropName: crop.name,
-        quantity: double.parse(crop.quantity.split(' ')[0]),
+        quantity: double.tryParse(crop.quantity.split(' ')[0]) ?? 1.0,
         price: crop.price,
         deliveryDate: DateFormat('dd MMMM yyyy').format(crop.harvestDate),
         deliveryLocation: crop.location,

@@ -1,0 +1,908 @@
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import '../../providers/app_state.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/custom_app_bar.dart';
+import '../../services/database_service.dart';
+import '../../services/smart_contract_pdf_service.dart';
+import '../../utils/crop_image_helper.dart';
+import '../../widgets/crop_tracking_map_sheet.dart';
+
+class FarmerOrdersScreen extends StatefulWidget {
+  const FarmerOrdersScreen({super.key});
+
+  @override
+  State<FarmerOrdersScreen> createState() => _FarmerOrdersScreenState();
+}
+
+class _FarmerOrdersScreenState extends State<FarmerOrdersScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final DatabaseService _dbService = DatabaseService();
+
+  double _toDouble(dynamic val) {
+    if (val == null) return 0.0;
+    if (val is num) return val.toDouble();
+    return double.tryParse(val.toString()) ?? 0.0;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
+    final user = appState.currentUser;
+    final farmerId = user?.id ?? '';
+
+    return Scaffold(
+      backgroundColor: AppTheme.backgroundGreen,
+      body: NestedScrollView(
+        headerSliverBuilder: (context, innerBoxIsScrolled) => [
+          const CustomAppBar(
+            title: 'My Orders',
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: AppTheme.softShadow,
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  labelColor: AppTheme.primaryColor,
+                  unselectedLabelColor: AppTheme.textSecondary,
+                  indicatorColor: AppTheme.primaryColor,
+                  indicatorWeight: 3,
+                  labelStyle: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                  tabs: const [
+                    Tab(
+                      icon: Icon(Icons.shopping_bag_outlined, size: 18),
+                      text: 'Retail Orders',
+                    ),
+                    Tab(
+                      icon: Icon(Icons.business_outlined, size: 18),
+                      text: 'FPO Procurement',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+        body: TabBarView(
+          controller: _tabController,
+          children: [
+            _buildRetailOrdersTab(farmerId),
+            _buildFpoProcurementOrdersTab(farmerId),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // TAB 1: Farmer -> Retail Buyer Orders
+  Widget _buildRetailOrdersTab(String farmerId) {
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _dbService.streamFarmerRetailOrders(farmerId),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final retailOrders = snapshot.data ?? [];
+
+        if (retailOrders.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.shopping_bag_outlined, size: 64, color: AppTheme.textSecondary.withValues(alpha: 0.35)),
+                  const SizedBox(height: 14),
+                  Text(
+                    'No Retail Orders Yet',
+                    style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'When retail buyers order your crops on the AgriChain marketplace, their orders with locked escrow will appear here in real time for fulfillment.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 13, color: AppTheme.textSecondary, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 30),
+          itemCount: retailOrders.length,
+          itemBuilder: (context, index) {
+            final order = retailOrders[index];
+            final cropName = order['cropName'] ?? 'Farm Produce';
+            final variety = order['variety'] ?? 'Standard';
+            final grade = order['grade'] ?? 'Grade A';
+            final imageUrl = order['imageUrl']?.toString() ?? '';
+            final buyerName = order['buyerName'] ?? 'Retail Buyer';
+            final buyerPhone = order['buyerPhone'] ?? 'Contact via App';
+            final deliveryAddress = order['deliveryAddress'] ?? 'Standard Delivery';
+            final qty = _toDouble(order['quantity']);
+            final price = _toDouble(order['price'] ?? order['pricePerUnit']);
+            final total = order['totalPrice'] != null ? _toDouble(order['totalPrice']) : (qty * price);
+            final status = (order['status'] ?? 'active').toString().toLowerCase();
+            final escrowStatus = (order['escrowStatus'] ?? 'LOCKED').toString();
+            final orderId = (order['orderId'] ?? order['id'] ?? 'ORD-$index').toString();
+            final dateStr = order['createdAt'] != null ? order['createdAt'].toString().split('T').first : 'Recent';
+            final txHash = order['txHash']?.toString() ?? '0x7c4e...89a1';
+
+            final isDelivered = status == 'delivered' || status == 'completed';
+            final isInTransit = status == 'in_transit';
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 1. Order Header Bar
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                      border: const Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.receipt_long, size: 16, color: Color(0xFF2E7D32)),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Order #$orderId • $dateStr',
+                              style: GoogleFonts.outfit(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: const Color(0xFF1E293B),
+                              ),
+                            ),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isDelivered
+                                ? const Color(0xFFDCFCE7)
+                                : isInTransit
+                                    ? const Color(0xFFEFF6FF)
+                                    : const Color(0xFFFEF3C7),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            isDelivered
+                                ? 'DELIVERED & SETTLED'
+                                : isInTransit
+                                    ? 'IN TRANSIT'
+                                    : 'PENDING DISPATCH',
+                            style: TextStyle(
+                              color: isDelivered
+                                  ? const Color(0xFF15803D)
+                                  : isInTransit
+                                      ? const Color(0xFF1D4ED8)
+                                      : const Color(0xFFB45309),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // 2. Crop Details & Financial Breakdown
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: CropImageHelper.buildCropImage(
+                                imageUrl,
+                                cropName,
+                                height: 72,
+                                width: 72,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    cropName,
+                                    style: GoogleFonts.outfit(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: const Color(0xFF0F172A),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFF1F5F9),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          variety,
+                                          style: const TextStyle(fontSize: 10, color: Color(0xFF475569), fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFE0F2FE),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          grade,
+                                          style: const TextStyle(fontSize: 10, color: Color(0xFF0369A1), fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        '$qty kg @ ₹$price/kg',
+                                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                      ),
+                                      Text(
+                                        '₹${total.toStringAsFixed(0)}',
+                                        style: GoogleFonts.outfit(
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 18,
+                                          color: const Color(0xFF2E7D32),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        // 3. Buyer & Delivery Info Tile
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.person, size: 14, color: Color(0xFF2563EB)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Buyer: $buyerName',
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                                  ),
+                                  const Spacer(),
+                                  const Icon(Icons.phone, size: 12, color: Color(0xFF64748B)),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    buyerPhone,
+                                    style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.location_on, size: 14, color: Color(0xFFE11D48)),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      deliveryAddress,
+                                      style: const TextStyle(fontSize: 11, color: Color(0xFF475569)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        // 4. Polygon Smart Escrow Assurance Badge
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isDelivered
+                                ? const Color(0xFFF0FDF4)
+                                : const Color(0xFFFAF5FF),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isDelivered ? const Color(0xFFBBF7D0) : const Color(0xFFE9D5FF),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isDelivered ? Icons.verified_user : Icons.lock_outline,
+                                size: 16,
+                                color: isDelivered ? const Color(0xFF166534) : const Color(0xFF7E22CE),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  isDelivered
+                                      ? 'Polygon Escrow: ₹${total.toStringAsFixed(0)} Settled to Bank ($escrowStatus)'
+                                      : 'Polygon Escrow: ₹${total.toStringAsFixed(0)} Locked (Tx: ${txHash.length > 12 ? "${txHash.substring(0, 10)}..." : txHash})',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDelivered ? const Color(0xFF166534) : const Color(0xFF7E22CE),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        // 5. Dual-Signed Smart Contract PDF Action Button
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              SmartContractPdfService.autoDownloadOrPreviewContract(
+                                context: context,
+                                order: order,
+                              );
+                            },
+                            icon: const Icon(Icons.picture_as_pdf, color: Color(0xFF1B5E20), size: 18),
+                            label: const Text(
+                              '📄 View Signed Smart Contract (PDF)',
+                              style: TextStyle(
+                                color: Color(0xFF1B5E20),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              side: const BorderSide(color: Color(0xFF2E7D32), width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              backgroundColor: const Color(0xFFF0FDF4),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        // Dual Tracking: Live Delivery Map
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => CropTrackingMapSheet.show(context, order),
+                            icon: const Icon(Icons.map_outlined, color: Color(0xFF1D4ED8), size: 18),
+                            label: const Text(
+                              '🗺️ Track Live Route & Delivery Map',
+                              style: TextStyle(
+                                color: Color(0xFF1D4ED8),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              side: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              backgroundColor: const Color(0xFFEFF6FF),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        // 6. Farmer Actions: Dispatch & OTP Escrow Release
+                        if (!isDelivered) ...[
+                          Row(
+                            children: [
+                              if (!isInTransit)
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      await _dbService.updateRetailOrderStatus(orderId, 'in_transit');
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('🚚 Order marked In Transit. Buyer notified!'),
+                                            backgroundColor: Color(0xFF2563EB),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    icon: const Icon(Icons.local_shipping, size: 16, color: Color(0xFF2563EB)),
+                                    label: const Text(
+                                      'Mark In Transit',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      side: const BorderSide(color: Color(0xFF2563EB)),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    ),
+                                  ),
+                                ),
+                              if (!isInTransit) const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _showFarmerOtpClaimDialog(context, order),
+                                  icon: const Icon(Icons.pin, size: 16, color: Colors.white),
+                                  label: const Text(
+                                    'Claim Escrow (OTP)',
+                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF2E7D32),
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ] else ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFDCFCE7),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.check_circle, color: Color(0xFF15803D), size: 16),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Delivery Handshake Complete • Escrow Payout Credited',
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // OTP Claim Dialog for Doorstep Handshake
+  void _showFarmerOtpClaimDialog(BuildContext context, Map<String, dynamic> order) {
+    final otpController = TextEditingController();
+    final expectedOtp = order['deliveryOtp']?.toString() ?? '';
+    final orderId = (order['orderId'] ?? order['id'] ?? '').toString();
+    final qty = _toDouble(order['quantity']);
+    final price = _toDouble(order['price'] ?? order['pricePerUnit']);
+    final total = order['totalPrice'] != null ? _toDouble(order['totalPrice']) : (qty * price);
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFDCFCE7),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.pin, color: Color(0xFF15803D), size: 22),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Release Escrow Payout',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Ask the buyer for their 6-digit Delivery Handshake OTP shown on their AgriChain receipt upon handover.',
+              style: TextStyle(fontSize: 13, color: AppTheme.textSecondary, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: otpController,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.outfit(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 8,
+                color: const Color(0xFF1B5E20),
+              ),
+              decoration: InputDecoration(
+                hintText: '• • • • • •',
+                counterText: '',
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 2),
+                ),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+              ),
+            ),
+            if (expectedOtp.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, size: 14, color: Color(0xFF2563EB)),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Demo test OTP: $expectedOtp',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FDF4),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFBBF7D0)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.currency_rupee, color: Color(0xFF15803D), size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Payout Amount: ₹${total.toStringAsFixed(0)}',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Cancel', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final entered = otpController.text.trim();
+              if (expectedOtp.isNotEmpty && entered != expectedOtp) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('❌ Incorrect OTP! Please verify with buyer.'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+
+              Navigator.pop(dialogCtx);
+
+              await _dbService.updateRetailOrderStatus(
+                orderId,
+                'delivered',
+                extra: {
+                  'escrowStatus': 'RELEASED_TO_FARMER',
+                  'deliveredAt': DateTime.now().toIso8601String(),
+                },
+              );
+
+              if (context.mounted) {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                    title: const Row(
+                      children: [
+                        Icon(Icons.check_circle, color: Color(0xFF2E7D32), size: 30),
+                        SizedBox(width: 10),
+                        Text('Escrow Released!'),
+                      ],
+                    ),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '🎉 Doorstep Handshake Verified via OTP!',
+                          style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 15, color: const Color(0xFF15803D)),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '₹${total.toStringAsFixed(0)} INR has been automatically released from the Polygon PoS Smart Escrow lock directly to your verified bank account.',
+                          style: const TextStyle(fontSize: 13, height: 1.4),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Text(
+                            'Polygon Tx: ${order['txHash'] ?? '0x9b12...c74a'}\nContract Status: FULFILLED',
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF475569)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      ElevatedButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2E7D32),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        child: const Text('Done', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2E7D32),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Verify & Release', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // TAB 2: Farmer -> FPO Procurement Orders
+  Widget _buildFpoProcurementOrdersTab(String farmerId) {
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _dbService.streamFarmerOrders(farmerId),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final allOrders = snapshot.data ?? [];
+        final fpoOrders = allOrders.where((o) => o['orderType'] == 'fpo_procurement').toList();
+
+        if (fpoOrders.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.business_outlined, size: 60, color: AppTheme.textSecondary.withValues(alpha: 0.4)),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'No FPO Procurement Orders',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'When an FPO procures directly from your listings or accepts your procurement offer, the orders and weighbridge slips will be listed here.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 30),
+          itemCount: fpoOrders.length,
+          itemBuilder: (context, index) {
+            final order = fpoOrders[index];
+            final cropName = order['cropName'] ?? 'Commodity';
+            final buyerName = order['buyerName'] ?? 'Central FPO';
+            final qty = _toDouble(order['quantity']);
+            final price = _toDouble(order['price']);
+            final total = order['totalPrice'] != null ? _toDouble(order['totalPrice']) : (qty * price);
+            final slipNumber = order['weighbridgeSlipNumber'] ?? 'WB-${order['id']?.toString().substring(0, 6)}';
+            final paymentMethod = order['paymentMethod'] ?? 'Direct Bank Transfer (IMPS)';
+            final dateStr = order['createdAt'] != null ? order['createdAt'].toString().split('T').first : 'Recent';
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: AppTheme.softShadow,
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE8F5E9),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.corporate_fare, color: Color(0xFF2E7D32), size: 20),
+                          ),
+                          const SizedBox(width: 10),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(cropName, style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 16)),
+                              Text('FPO: $buyerName', style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                            ],
+                          ),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDCFCE7),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'PROCURED & PAID',
+                          style: TextStyle(
+                            color: Color(0xFF15803D),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Weighbridge Slip: $slipNumber', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                        Text(paymentMethod, style: const TextStyle(fontSize: 11, color: Color(0xFF2563EB), fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 18, color: Color(0xFFF1F5F9)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Volume: $qty kg @ ₹$price', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                      Text('Total Payout: ₹${total.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF2E7D32))),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        SmartContractPdfService.autoDownloadOrPreviewContract(
+                          context: context,
+                          order: order,
+                        );
+                      },
+                      icon: const Icon(Icons.picture_as_pdf, color: Color(0xFF1B5E20), size: 16),
+                      label: const Text(
+                        '📄 View FPO Procurement Smart Contract (PDF)',
+                        style: TextStyle(
+                          color: Color(0xFF1B5E20),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        side: const BorderSide(color: Color(0xFF2E7D32)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        backgroundColor: const Color(0xFFF0FDF4),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Completed on: $dateStr', style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}

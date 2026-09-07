@@ -41,45 +41,44 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyCh45e2VAM5X5YVS8QyHC6CI5IsQGixp-Q',
-    appId: '1:291941172263:web:aed6f35bac8e4694f57a02',
-    messagingSenderId: '291941172263',
-    projectId: 'agrichain-hackathon',
-    authDomain: 'agrichain-hackathon.firebaseapp.com',
-    storageBucket: 'agrichain-hackathon.firebasestorage.app',
+    apiKey: 'AIzaSyA-UWJeooM7f7u-hvOR6p9RpNiUcUYbQUc',
+    appId: '1:736150524813:web:1b511762cb3238cccee3c4',
+    messagingSenderId: '736150524813',
+    projectId: 'agrichain-official-app',
+    authDomain: 'agrichain-official-app.firebaseapp.com',
+    storageBucket: 'agrichain-official-app.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCh45e2VAM5X5YVS8QyHC6CI5IsQGixp-Q',
-    appId: '1:291941172263:android:aed6f35bac8e4694f57a02',
-    messagingSenderId: '291941172263',
-    projectId: 'agrichain-hackathon',
-    storageBucket: 'agrichain-hackathon.firebasestorage.app',
+    apiKey: 'AIzaSyDNnIXKYwIZMgGyFhfsXZLF9VBUlix3bnE',
+    appId: '1:736150524813:android:f832153084a1b472cee3c4',
+    messagingSenderId: '736150524813',
+    projectId: 'agrichain-official-app',
+    storageBucket: 'agrichain-official-app.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyCh45e2VAM5X5YVS8QyHC6CI5IsQGixp-Q',
-    appId: '1:291941172263:ios:aed6f35bac8e4694f57a02',
-    messagingSenderId: '291941172263',
-    projectId: 'agrichain-hackathon',
-    storageBucket: 'agrichain-hackathon.firebasestorage.app',
-    iosBundleId: 'com.agrichain.hackathon',
+    apiKey: 'AIzaSyC6939CSc2aF3HZBvuFX9zdPpGDBineg6U',
+    appId: '1:736150524813:ios:5e9e29cb9a2c3637cee3c4',
+    messagingSenderId: '736150524813',
+    projectId: 'agrichain-official-app',
+    storageBucket: 'agrichain-official-app.firebasestorage.app',
+    iosBundleId: 'com.example.agrichain',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyCh45e2VAM5X5YVS8QyHC6CI5IsQGixp-Q',
-    appId: '1:291941172263:macos:aed6f35bac8e4694f57a02',
-    messagingSenderId: '291941172263',
-    projectId: 'agrichain-hackathon',
-    storageBucket: 'agrichain-hackathon.firebasestorage.app',
-    iosBundleId: 'com.agrichain.hackathon',
+    apiKey: 'AIzaSyC6939CSc2aF3HZBvuFX9zdPpGDBineg6U',
+    appId: '1:736150524813:ios:5e9e29cb9a2c3637cee3c4',
+    messagingSenderId: '736150524813',
+    projectId: 'agrichain-official-app',
+    storageBucket: 'agrichain-official-app.firebasestorage.app',
+    iosBundleId: 'com.example.agrichain',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyCh45e2VAM5X5YVS8QyHC6CI5IsQGixp-Q',
-    appId: '1:291941172263:windows:aed6f35bac8e4694f57a02',
-    messagingSenderId: '291941172263',
-    projectId: 'agrichain-hackathon',
-    storageBucket: 'agrichain-hackathon.firebasestorage.app',
+    apiKey: 'AIzaSyA-UWJeooM7f7u-hvOR6p9RpNiUcUYbQUc',
+    appId: '1:736150524813:web:5cb0979c390eb82fcee3c4',
+    messagingSenderId: '736150524813',
+    projectId: 'agrichain-official-app',
+    authDomain: 'agrichain-official-app.firebaseapp.com',
+    storageBucket: 'agrichain-official-app.firebasestorage.app',
   );
 }

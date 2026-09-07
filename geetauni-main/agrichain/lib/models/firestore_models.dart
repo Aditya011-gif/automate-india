@@ -23,7 +23,7 @@ enum CertificationType { organic, fssai, agmark, iso, gmp, haccp }
 
 enum QualityGrade { premium, grade1, grade2, standard }
 
-enum UserType { farmer, buyer, lender, admin }
+enum UserType { farmer, buyer, lender, admin, fpo, retailBuyer }
 
 enum RatingType { quality, delivery, communication, overall, buyer, seller }
 
@@ -97,7 +97,12 @@ class FirestoreUser {
       email: data['email'] ?? '',
       phone: data['phone'],
       userType: UserType.values.firstWhere(
-        (e) => e.name == data['userType'],
+        (e) {
+          final str = (data['userType'] ?? '').toString().toLowerCase();
+          if (e == UserType.retailBuyer && (str == 'retailbuyer' || str == 'retail_buyer')) return true;
+          if (e == UserType.buyer && (str == 'buyer' || str == 'bulk_buyer' || str == 'bulkbuyer')) return true;
+          return e.name.toLowerCase() == str;
+        },
         orElse: () => UserType.farmer,
       ),
       location: data['location'],
@@ -260,7 +265,7 @@ class FirestoreCrop {
       farmerName: data['farmerName'] ?? '',
       location: data['location'] ?? '',
       price: (data['price'] ?? 0.0).toDouble(),
-      quantity: data['quantity'] ?? '',
+      quantity: data['quantity']?.toString() ?? '',
       harvestDate: (data['harvestDate'] as Timestamp).toDate(),
       imageUrl: data['imageUrl'] ?? '',
       description: data['description'] ?? '',
@@ -314,6 +319,72 @@ class FirestoreCrop {
   bool get isAuctionActive {
     if (!isAuction || auctionEndTime == null) return false;
     return DateTime.now().isBefore(auctionEndTime!);
+  }
+
+  FirestoreCrop copyWith({
+    String? id,
+    String? name,
+    String? farmerId,
+    String? farmerName,
+    String? location,
+    double? price,
+    String? quantity,
+    DateTime? harvestDate,
+    String? imageUrl,
+    String? description,
+    bool? isNFT,
+    String? nftTokenId,
+    BiddingType? biddingType,
+    String? auctionId,
+    DateTime? auctionEndTime,
+    double? startingBid,
+    double? reservePrice,
+    CropType? cropType,
+    CropCategory? category,
+    List<Map<String, dynamic>>? certifications,
+    QualityGrade? qualityGrade,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    bool? isActive,
+    String? signatureUrl,
+    double? agriScore,
+    String? riskTier,
+    double? ndviValue,
+    String? soilType,
+    Map<String, dynamic>? mlPredictions,
+  }) {
+    return FirestoreCrop(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      farmerId: farmerId ?? this.farmerId,
+      farmerName: farmerName ?? this.farmerName,
+      location: location ?? this.location,
+      price: price ?? this.price,
+      quantity: quantity ?? this.quantity,
+      harvestDate: harvestDate ?? this.harvestDate,
+      imageUrl: imageUrl ?? this.imageUrl,
+      description: description ?? this.description,
+      isNFT: isNFT ?? this.isNFT,
+      nftTokenId: nftTokenId ?? this.nftTokenId,
+      biddingType: biddingType ?? this.biddingType,
+      auctionId: auctionId ?? this.auctionId,
+      auctionEndTime: auctionEndTime ?? this.auctionEndTime,
+      startingBid: startingBid ?? this.startingBid,
+      reservePrice: reservePrice ?? this.reservePrice,
+      cropType: cropType ?? this.cropType,
+      category: category ?? this.category,
+      certifications: certifications ?? this.certifications,
+      qualityGrade: qualityGrade ?? this.qualityGrade,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      isActive: isActive ?? this.isActive,
+      signatureUrl: signatureUrl ?? this.signatureUrl,
+      agriScore: agriScore ?? this.agriScore,
+      riskTier: riskTier ?? this.riskTier,
+      ndviValue: ndviValue ?? this.ndviValue,
+      soilType: soilType ?? this.soilType,
+      mlPredictions: mlPredictions ?? this.mlPredictions,
+    );
   }
 }
 
@@ -472,13 +543,15 @@ class FirestoreOrder {
     final data = doc.data() as Map<String, dynamic>;
     return FirestoreOrder(
       id: doc.id,
-      cropId: data['cropId'] ?? '',
-      buyerId: data['buyerId'] ?? '',
-      buyerName: data['buyerName'] ?? '',
-      sellerId: data['sellerId'] ?? '',
-      sellerName: data['sellerName'] ?? '',
-      quantity: data['quantity'] ?? '',
-      totalAmount: (data['totalAmount'] ?? 0.0).toDouble(),
+      cropId: data['cropId']?.toString() ?? '',
+      buyerId: data['buyerId']?.toString() ?? '',
+      buyerName: data['buyerName']?.toString() ?? '',
+      sellerId: data['sellerId']?.toString() ?? '',
+      sellerName: data['sellerName']?.toString() ?? '',
+      quantity: data['quantity']?.toString() ?? '',
+      totalAmount: (data['totalAmount'] is num)
+          ? (data['totalAmount'] as num).toDouble()
+          : (double.tryParse(data['totalAmount']?.toString() ?? '0') ?? 0.0),
       status: OrderStatus.values.firstWhere(
         (e) => e.name == data['status'],
         orElse: () => OrderStatus.pending,
@@ -851,4 +924,217 @@ class UserRatingStats {
       lastUpdated: DateTime.now(),
     );
   }
+}
+
+// ----------------------------------------------------
+// FPO Specific Domain Models
+// ----------------------------------------------------
+
+class FpoBulkLot {
+  final String id;
+  final String fpoId;
+  final String lotNumber;
+  final String cropName;
+  final CropType cropType;
+  final CropCategory category;
+  final double totalQuantityKg;
+  final double reservedQuantityKg;
+  final double basePricePerKg;
+  final QualityGrade qualityGrade;
+  final List<CertificationType> certifications;
+  final String warehouseLocation;
+  final DateTime aggregatedDate;
+  final bool isListed;
+  final Map<String, dynamic> metadata;
+
+  double get availableQuantityKg => totalQuantityKg - reservedQuantityKg;
+
+  FpoBulkLot({
+    required this.id,
+    required this.fpoId,
+    required this.lotNumber,
+    required this.cropName,
+    required this.cropType,
+    required this.category,
+    required this.totalQuantityKg,
+    this.reservedQuantityKg = 0.0,
+    required this.basePricePerKg,
+    this.qualityGrade = QualityGrade.premium,
+    this.certifications = const [],
+    required this.warehouseLocation,
+    required this.aggregatedDate,
+    this.isListed = true,
+    this.metadata = const {},
+  });
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'id': id,
+      'fpoId': fpoId,
+      'lotNumber': lotNumber,
+      'cropName': cropName,
+      'cropType': cropType.name,
+      'category': category.name,
+      'totalQuantityKg': totalQuantityKg,
+      'reservedQuantityKg': reservedQuantityKg,
+      'basePricePerKg': basePricePerKg,
+      'qualityGrade': qualityGrade.name,
+      'certifications': certifications.map((c) => c.name).toList(),
+      'warehouseLocation': warehouseLocation,
+      'aggregatedDate': Timestamp.fromDate(aggregatedDate),
+      'isListed': isListed,
+      'metadata': metadata,
+    };
+  }
+
+  factory FpoBulkLot.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return FpoBulkLot(
+      id: doc.id,
+      fpoId: data['fpoId'] ?? '',
+      lotNumber: data['lotNumber'] ?? '',
+      cropName: data['cropName'] ?? '',
+      cropType: CropType.values.firstWhere(
+        (e) => e.name == data['cropType'],
+        orElse: () => CropType.wheat,
+      ),
+      category: CropCategory.values.firstWhere(
+        (e) => e.name == data['category'],
+        orElse: () => CropCategory.grains,
+      ),
+      totalQuantityKg: (data['totalQuantityKg'] ?? 0.0).toDouble(),
+      reservedQuantityKg: (data['reservedQuantityKg'] ?? 0.0).toDouble(),
+      basePricePerKg: (data['basePricePerKg'] ?? 0.0).toDouble(),
+      qualityGrade: QualityGrade.values.firstWhere(
+        (e) => e.name == data['qualityGrade'],
+        orElse: () => QualityGrade.grade1,
+      ),
+      certifications: (data['certifications'] as List<dynamic>? ?? [])
+          .map((c) => CertificationType.values.firstWhere(
+                (e) => e.name == c,
+                orElse: () => CertificationType.organic,
+              ))
+          .toList(),
+      warehouseLocation: data['warehouseLocation'] ?? '',
+      aggregatedDate: (data['aggregatedDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      isListed: data['isListed'] ?? true,
+      metadata: data['metadata'] ?? {},
+    );
+  }
+}
+
+class ProcurementOffer {
+  final String id;
+  final String farmerId;
+  final String farmerName;
+  final String farmerPhone;
+  final String village;
+  final String cropName;
+  final CropType cropType;
+  final double estimatedQuantityKg;
+  final double offeredPricePerKg;
+  final QualityGrade qualityGrade;
+  final DateTime harvestDate;
+  final String status; // 'pending', 'accepted', 'collected', 'rejected'
+  final DateTime createdAt;
+
+  ProcurementOffer({
+    required this.id,
+    required this.farmerId,
+    required this.farmerName,
+    required this.farmerPhone,
+    required this.village,
+    required this.cropName,
+    required this.cropType,
+    required this.estimatedQuantityKg,
+    required this.offeredPricePerKg,
+    required this.qualityGrade,
+    required this.harvestDate,
+    this.status = 'pending',
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'id': id,
+      'farmerId': farmerId,
+      'farmerName': farmerName,
+      'farmerPhone': farmerPhone,
+      'village': village,
+      'cropName': cropName,
+      'cropType': cropType.name,
+      'estimatedQuantityKg': estimatedQuantityKg,
+      'offeredPricePerKg': offeredPricePerKg,
+      'qualityGrade': qualityGrade.name,
+      'harvestDate': Timestamp.fromDate(harvestDate),
+      'status': status,
+      'createdAt': Timestamp.fromDate(createdAt),
+    };
+  }
+}
+
+class BulkRfq {
+  final String id;
+  final String buyerId;
+  final String buyerName;
+  final String companyName;
+  final String cropName;
+  final CropType cropType;
+  final double requiredQuantityKg;
+  final double targetPricePerKg;
+  final String deliveryLocation;
+  final DateTime deadline;
+  final String status; // 'open', 'quoted', 'accepted', 'closed'
+  final int quotesCount;
+  final DateTime createdAt;
+
+  BulkRfq({
+    required this.id,
+    required this.buyerId,
+    required this.buyerName,
+    required this.companyName,
+    required this.cropName,
+    required this.cropType,
+    required this.requiredQuantityKg,
+    required this.targetPricePerKg,
+    required this.deliveryLocation,
+    required this.deadline,
+    this.status = 'open',
+    this.quotesCount = 0,
+    required this.createdAt,
+  });
+}
+
+class FpoShipment {
+  final String id;
+  final String orderId;
+  final String buyerName;
+  final String destination;
+  final String driverName;
+  final String driverPhone;
+  final String vehicleNumber;
+  final String trackingStatus; // 'dispatched', 'in_transit', 'arrived', 'delivered'
+  final double totalWeightKg;
+  final DateTime dispatchTime;
+  final DateTime estimatedArrival;
+  final double currentLat;
+  final double currentLng;
+  final List<String> waypoints;
+
+  FpoShipment({
+    required this.id,
+    required this.orderId,
+    required this.buyerName,
+    required this.destination,
+    required this.driverName,
+    required this.driverPhone,
+    required this.vehicleNumber,
+    required this.trackingStatus,
+    required this.totalWeightKg,
+    required this.dispatchTime,
+    required this.estimatedArrival,
+    required this.currentLat,
+    required this.currentLng,
+    required this.waypoints,
+  });
 }

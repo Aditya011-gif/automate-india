@@ -1,15 +1,13 @@
 import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme/app_theme.dart';
 import '../services/database_service.dart';
 import '../services/security_service.dart';
 import '../models/firestore_models.dart';
+import '../widgets/signature_pad_dialog.dart';
 import 'profile_setup_screen.dart';
 import 'login_screen.dart';
 
@@ -50,6 +48,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   // Signature State
   XFile? _signatureImage;
+  String? _signatureDataUri;
+  bool _isDigiLockerSignature = false;
 
   @override
   void dispose() {
@@ -144,18 +144,24 @@ class _SignUpScreenState extends State<SignUpScreen> {
           await DatabaseService().createKycData(kycData);
         }
 
-        // Save Signature as Base64 directly in Firestore (bypasses Firebase Storage)
-        if (_signatureImage != null) {
-          debugPrint('📤 Converting signature to Base64...');
+        // Save Signature directly in Firestore
+        if (_signatureDataUri != null && _signatureDataUri!.isNotEmpty) {
+          debugPrint('📤 Saving digital signature data URI to Firestore...');
+          try {
+            await DatabaseService().updateUser(userCredential.user!.uid, {
+              'signatureUrl': _signatureDataUri,
+              'updatedAt': DateTime.now().toIso8601String(),
+            });
+            debugPrint('✅ User document updated with digital signature');
+          } catch (e) {
+            debugPrint('❌ Signature save failed: $e');
+          }
+        } else if (_signatureImage != null) {
+          debugPrint('📤 Converting signature image to Base64...');
           try {
             final bytes = await _signatureImage!.readAsBytes();
             final base64String = base64Encode(bytes);
             final dataUri = 'data:image/jpeg;base64,$base64String';
-            debugPrint(
-              '✅ Signature converted to Base64 (${bytes.length} bytes)',
-            );
-
-            // Update user document with signature data URI
             await DatabaseService().updateUser(userCredential.user!.uid, {
               'signatureUrl': dataUri,
               'updatedAt': DateTime.now().toIso8601String(),
@@ -163,7 +169,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
             debugPrint('✅ User document updated with Base64 signature');
           } catch (e) {
             debugPrint('❌ Signature conversion failed: $e');
-            // Continue with signup even if signature save fails
             _showErrorSnackBar(
               'Signature save failed, but account created. You can update it later in profile.',
             );
@@ -278,23 +283,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
   }
 
-  Future<void> _pickSignatureImage() async {
-    try {
-      final ImagePicker picker = ImagePicker();
-      final XFile? image = await picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 70,
-        maxWidth: 1024,
-      );
+  Future<void> _openSignaturePadDialog() async {
+    final res = await SignaturePadDialog.show(
+      context,
+      signerName: '${_firstNameController.text.trim()} ${_lastNameController.text.trim()}'.trim(),
+      isFarmer: _selectedUserType == UserType.farmer,
+    );
 
-      if (image != null) {
-        setState(() {
-          _signatureImage = image;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error picking signature: $e');
-      _showErrorSnackBar('Failed to pick instance image');
+    if (res != null && res['signatureUrl'] != null) {
+      setState(() {
+        _signatureDataUri = res['signatureUrl'] as String;
+        _isDigiLockerSignature = res['isDigiLockerVerified'] == true;
+      });
+      _showSuccessSnackBar('Digital signature captured successfully!');
     }
   }
 
@@ -483,24 +484,50 @@ class _SignUpScreenState extends State<SignUpScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
+          Column(
             children: [
-              Expanded(
-                child: _buildUserTypeCard(
-                  userType: UserType.farmer,
-                  title: 'Farmer/Seller',
-                  subtitle: 'Sell crops & get loans',
-                  icon: Icons.agriculture,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildUserTypeCard(
+                      userType: UserType.farmer,
+                      title: 'Farmer',
+                      subtitle: 'Sell crops',
+                      icon: Icons.agriculture,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildUserTypeCard(
+                      userType: UserType.fpo,
+                      title: 'FPO / Co-op',
+                      subtitle: 'Procure & aggregate',
+                      icon: Icons.corporate_fare,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildUserTypeCard(
-                  userType: UserType.buyer,
-                  title: 'Buyer/Lender',
-                  subtitle: 'Buy crops & provide loans',
-                  icon: Icons.shopping_cart,
-                ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildUserTypeCard(
+                      userType: UserType.buyer,
+                      title: 'Bulk Buyer',
+                      subtitle: 'RFQs & clusters',
+                      icon: Icons.business,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildUserTypeCard(
+                      userType: UserType.retailBuyer,
+                      title: 'Retail Buyer',
+                      subtitle: 'Buy produce',
+                      icon: Icons.shopping_cart,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -776,26 +803,88 @@ class _SignUpScreenState extends State<SignUpScreen> {
             ),
             child: Column(
               children: [
-                if (_signatureImage != null) ...[
+                if (_signatureDataUri != null && _signatureDataUri!.isNotEmpty) ...[
+                  if (_isDigiLockerSignature) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green.shade700, width: 1.2),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.verified_user, color: Color(0xFF1B5E20), size: 30),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'DigiLocker Aadhaar e-Sign Verified',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1B5E20)),
+                                ),
+                                Text(
+                                  'Authority: CCA / MeitY • IT Act 2000 Legal',
+                                  style: TextStyle(fontSize: 11, color: Colors.green.shade800),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        height: 90,
+                        width: double.infinity,
+                        color: Colors.grey.shade50,
+                        child: () {
+                          try {
+                            final raw = _signatureDataUri!.contains(',')
+                                ? _signatureDataUri!.split(',').last
+                                : _signatureDataUri!;
+                            final bytes = base64Decode(raw.trim());
+                            return Image.memory(bytes, fit: BoxFit.contain);
+                          } catch (_) {
+                            return const Center(
+                              child: Icon(Icons.draw, size: 40, color: AppTheme.primaryGreen),
+                            );
+                          }
+                        }(),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _openSignaturePadDialog,
+                    icon: const Icon(Icons.edit, color: AppTheme.primaryGreen),
+                    label: const Text('Change / Re-Sign'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primaryGreen,
+                      side: const BorderSide(color: AppTheme.primaryGreen),
+                    ),
+                  ),
+                ] else if (_signatureImage != null) ...[
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: kIsWeb
-                        ? Image.network(
-                            _signatureImage!.path,
-                            height: 100,
-                            width: double.infinity,
-                            fit: BoxFit.contain,
-                          )
-                        : Image.file(
-                            File(_signatureImage!.path),
-                            height: 100,
-                            width: double.infinity,
-                            fit: BoxFit.contain,
-                          ),
+                    child: Image.network(
+                      _signatureImage!.path,
+                      height: 100,
+                      width: double.infinity,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.draw,
+                        size: 48,
+                        color: AppTheme.primaryGreen,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   OutlinedButton.icon(
-                    onPressed: _pickSignatureImage,
+                    onPressed: _openSignaturePadDialog,
                     icon: const Icon(Icons.edit, color: AppTheme.primaryGreen),
                     label: const Text('Change Signature'),
                     style: OutlinedButton.styleFrom(
@@ -804,23 +893,28 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     ),
                   ),
                 ] else ...[
-                  const Icon(Icons.draw, size: 48, color: AppTheme.grey),
+                  const Icon(Icons.gesture, size: 44, color: AppTheme.primaryGreen),
                   const SizedBox(height: 8),
                   const Text(
-                    'Upload your signature for contracts',
-                    style: TextStyle(color: AppTheme.grey),
+                    'Upload, Draw or Authenticate via DigiLocker e-Sign',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: AppTheme.darkGreen),
                   ),
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    onPressed: _pickSignatureImage,
-                    icon: const Icon(
-                      Icons.upload,
-                      color: AppTheme.primaryGreen,
-                    ),
-                    label: const Text('Upload Signature'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.primaryGreen,
-                      side: const BorderSide(color: AppTheme.primaryGreen),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Legally binding for Smart Contract PDF generation upon sale',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11, color: AppTheme.grey),
+                  ),
+                  const SizedBox(height: 14),
+                  ElevatedButton.icon(
+                    onPressed: _openSignaturePadDialog,
+                    icon: const Icon(Icons.fingerprint, color: Colors.white, size: 18),
+                    label: const Text('Add Digital Signature / DigiLocker'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryGreen,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                   ),
                 ],

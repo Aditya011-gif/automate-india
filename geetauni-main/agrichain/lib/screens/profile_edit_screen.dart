@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -611,19 +610,17 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           if (_signatureImage != null) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: kIsWeb
-                  ? Image.network(
-                      _signatureImage!.path,
-                      height: 100,
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                    )
-                  : Image.file(
-                      File(_signatureImage!.path),
-                      height: 100,
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                    ),
+              child: Image.network(
+                _signatureImage!.path,
+                height: 100,
+                width: double.infinity,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Icon(
+                  Icons.draw,
+                  size: 48,
+                  color: AppTheme.primaryGreen,
+                ),
+              ),
             ),
             const SizedBox(height: 8),
             Row(
@@ -829,11 +826,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               .child('signatures')
               .child('$userId.jpg');
 
-          if (kIsWeb) {
-            await ref.putData(await _signatureImage!.readAsBytes());
-          } else {
-            await ref.putFile(File(_signatureImage!.path));
-          }
+          await ref.putData(await _signatureImage!.readAsBytes());
 
           final signatureUrl = await ref.getDownloadURL();
           debugPrint('✅ Signature uploaded: $signatureUrl');

@@ -5,21 +5,18 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:agrichain/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
-import 'screens/home_screen.dart';
-import 'screens/my_crops_screen.dart';
-import 'screens/loans_screen.dart';
-import 'screens/marketplace_screen.dart';
-import 'screens/profile_screen.dart';
-// wallet_screen import removed — wallet section no longer used
-import 'screens/analytics_screen.dart';
+// Screens organized by role
+import 'screens/farmer/farmer.dart';
+import 'screens/bulk_buyer/bulk_buyer.dart';
+import 'screens/retail_buyer/retail_buyer.dart';
+import 'screens/fpo/fpo.dart';
 import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
-import 'screens/add_crop_screen.dart';
-import 'screens/downloads_screen.dart';
-import 'screens/land_analysis_screen.dart';
 import 'providers/app_state.dart';
 import 'config/app_initializer.dart';
 import 'models/firestore_models.dart';
@@ -116,12 +113,27 @@ class _AgriChainAppState extends State<AgriChainApp> {
           },
         ),
       ],
-      child: MaterialApp(
-        title: 'AgriChain',
-        theme: AppTheme.lightTheme,
-        home: _buildHome(),
-        debugShowCheckedModeBanner: false,
-        onGenerateRoute: _generateRoute,
+      child: Consumer<AppState>(
+        builder: (context, appState, child) {
+          return MaterialApp(
+            title: 'AgriChain',
+            theme: AppTheme.lightTheme,
+            locale: appState.locale,
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: const [
+              Locale('en', ''),
+              Locale('hi', ''),
+            ],
+            home: _buildHome(),
+            debugShowCheckedModeBanner: false,
+            onGenerateRoute: _generateRoute,
+          );
+        },
       ),
     );
   }
@@ -152,21 +164,25 @@ class _AgriChainAppState extends State<AgriChainApp> {
       return OnboardingScreen(onComplete: _markOnboardingComplete);
     }
 
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return _buildLoadingScreen();
-        }
-
-        if (snapshot.hasData && snapshot.data != null) {
-          // User is signed in, show main screen
-          // Note: AppState._onAuthStateChanged will handle loading user data
+    return Consumer<AppState>(
+      builder: (context, appState, _) {
+        if (appState.currentUser != null) {
           return const MainScreen();
-        } else {
-          // User is not signed in, show login screen
-          return const LoginScreen();
         }
+        return StreamBuilder<User?>(
+          stream: FirebaseAuth.instance.authStateChanges(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return _buildLoadingScreen();
+            }
+
+            if (snapshot.hasData && snapshot.data != null) {
+              return const MainScreen();
+            } else {
+              return const LoginScreen();
+            }
+          },
+        );
       },
     );
   }
@@ -334,85 +350,151 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
-  // Farmer/Seller screens
-  final List<Widget> _farmerScreens = [
-    const HomeScreen(),
+  // Farmer/Seller screens (5 primary tabs matching specification)
+  late final List<Widget> _farmerScreens = [
+    HomeScreen(onNavigateTab: _onTabTapped),
     const MyCropsScreen(),
-    const LoansScreen(),
-    const MarketplaceScreen(),
-    const LandAnalysisScreen(),
-    const ProfileScreen(),
+    const FarmerOrdersScreen(),
+    const FarmerPayoutHistoryScreen(),
+    const FarmerProfileScreen(),
   ];
 
-  // Buyer screens
-  final List<Widget> _buyerScreens = [
-    const MarketplaceScreen(),
-    const ProfileScreen(),
-    const LoansScreen(),
-    const DownloadsScreen(),
-    const AnalyticsScreen(),
+  // Bulk Buyer screens (5 primary tabs)
+  late final List<Widget> _bulkBuyerScreens = [
+    BulkBuyerHomeScreen(onNavigateTab: _onTabTapped),
+    const BulkBuyerSupplyScreen(),
+    const BulkBuyerRfqsScreen(),
+    const BulkBuyerOrdersScreen(),
+    const BuyerInvoicesScreen(),
   ];
 
-  // Farmer/Seller navigation items
-  final List<BottomNavigationBarItem> _farmerNavItems = [
-    const BottomNavigationBarItem(
-      icon: Icon(Icons.home_outlined),
-      activeIcon: Icon(Icons.home),
-      label: 'Home',
+  // Retail Buyer screens (5 primary tabs: Home, Group Buy, Orders, Saved, Profile)
+  late final List<Widget> _retailBuyerScreens = [
+    RetailBuyerHomeScreen(onNavigateTab: _onTabTapped),
+    const GroupBuyingScreen(),
+    const RetailBuyerOrdersScreen(),
+    RetailBuyerSavedScreen(onNavigateTab: _onTabTapped),
+    RetailBuyerProfileScreen(onNavigateTab: _onTabTapped),
+  ];
+
+  // FPO screens (5 primary tabs: Home, Inventory, Orders, Earnings, Profile)
+  late final List<Widget> _fpoScreens = [
+    FpoHomeScreen(onNavigateTab: _onTabTapped),
+    const FpoInventoryScreen(),
+    const FpoOrdersScreen(),
+    const FpoSettlementScreen(),
+    const FpoProfileScreen(),
+  ];
+
+  List<BottomNavigationBarItem> _getFpoNavItems(AppLocalizations? l10n) => [
+    BottomNavigationBarItem(
+      icon: const Icon(Icons.home_outlined),
+      activeIcon: const Icon(Icons.home),
+      label: l10n?.navHome ?? 'Home',
     ),
     const BottomNavigationBarItem(
-      icon: Icon(Icons.agriculture_outlined),
-      activeIcon: Icon(Icons.agriculture),
-      label: 'My Crops',
+      icon: Icon(Icons.inventory_2_outlined),
+      activeIcon: Icon(Icons.inventory_2),
+      label: 'Inventory',
     ),
     const BottomNavigationBarItem(
-      icon: Icon(Icons.account_balance_outlined),
-      activeIcon: Icon(Icons.account_balance),
-      label: 'Loans',
+      icon: Icon(Icons.shopping_bag_outlined),
+      activeIcon: Icon(Icons.shopping_bag),
+      label: 'Orders',
     ),
     const BottomNavigationBarItem(
-      icon: Icon(Icons.shopping_cart_outlined),
-      activeIcon: Icon(Icons.shopping_cart),
-      label: 'Marketplace',
+      icon: Icon(Icons.account_balance_wallet_outlined),
+      activeIcon: Icon(Icons.account_balance_wallet),
+      label: 'Earnings',
+    ),
+    BottomNavigationBarItem(
+      icon: const Icon(Icons.person_outline),
+      activeIcon: const Icon(Icons.person),
+      label: l10n?.navProfile ?? 'Profile',
+    ),
+  ];
+
+  List<BottomNavigationBarItem> _getFarmerNavItems(AppLocalizations? l10n) => [
+    BottomNavigationBarItem(
+      icon: const Icon(Icons.home_outlined),
+      activeIcon: const Icon(Icons.home),
+      label: l10n?.navHome ?? 'Home',
+    ),
+    BottomNavigationBarItem(
+      icon: const Icon(Icons.agriculture_outlined),
+      activeIcon: const Icon(Icons.agriculture),
+      label: l10n?.navMyCrops ?? 'My Crops',
     ),
     const BottomNavigationBarItem(
-      icon: Icon(Icons.satellite_alt_outlined),
-      activeIcon: Icon(Icons.satellite_alt),
-      label: 'Land Scan',
+      icon: Icon(Icons.shopping_bag_outlined),
+      activeIcon: Icon(Icons.shopping_bag),
+      label: 'Orders',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.receipt_long_outlined),
+      activeIcon: Icon(Icons.receipt_long),
+      label: 'Passbook',
+    ),
+    BottomNavigationBarItem(
+      icon: const Icon(Icons.person_outline),
+      activeIcon: const Icon(Icons.person),
+      label: l10n?.navProfile ?? 'Profile',
+    ),
+  ];
+
+  List<BottomNavigationBarItem> _getBulkBuyerNavItems(AppLocalizations? l10n) => [
+    BottomNavigationBarItem(
+      icon: const Icon(Icons.home_outlined),
+      activeIcon: const Icon(Icons.home),
+      label: l10n?.navHome ?? 'Home',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.hub_outlined),
+      activeIcon: Icon(Icons.hub),
+      label: 'Supply',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.assignment_outlined),
+      activeIcon: Icon(Icons.assignment),
+      label: 'RFQs',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.inventory_2_outlined),
+      activeIcon: Icon(Icons.inventory_2),
+      label: 'Orders',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.receipt_outlined),
+      activeIcon: Icon(Icons.receipt),
+      label: 'Invoices',
+    ),
+  ];
+
+  List<BottomNavigationBarItem> _getRetailBuyerNavItems(AppLocalizations? l10n) => [
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.storefront_outlined),
+      activeIcon: Icon(Icons.storefront),
+      label: 'Fresh Shop',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.hub_outlined),
+      activeIcon: Icon(Icons.hub),
+      label: 'Farmer Clusters',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.shopping_bag_outlined),
+      activeIcon: Icon(Icons.shopping_bag),
+      label: 'Orders',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.favorite_border),
+      activeIcon: Icon(Icons.favorite),
+      label: 'Saved',
     ),
     const BottomNavigationBarItem(
       icon: Icon(Icons.person_outline),
       activeIcon: Icon(Icons.person),
       label: 'Profile',
-    ),
-  ];
-
-  // Buyer navigation items
-  final List<BottomNavigationBarItem> _buyerNavItems = [
-    const BottomNavigationBarItem(
-      icon: Icon(Icons.store_outlined),
-      activeIcon: Icon(Icons.store),
-      label: 'Market',
-    ),
-    const BottomNavigationBarItem(
-      icon: Icon(Icons.person_outline),
-      activeIcon: Icon(Icons.person),
-      label: 'Profile',
-    ),
-    const BottomNavigationBarItem(
-      icon: Icon(Icons.account_balance_outlined),
-      activeIcon: Icon(Icons.account_balance),
-      label: 'Loans',
-    ),
-    const BottomNavigationBarItem(
-      icon: Icon(Icons.description_outlined),
-      activeIcon: Icon(Icons.description),
-      label: 'Contracts',
-    ),
-    const BottomNavigationBarItem(
-      icon: Icon(Icons.analytics_outlined),
-      activeIcon: Icon(Icons.analytics),
-      label: 'Analytics',
     ),
   ];
 
@@ -447,6 +529,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
     return Consumer<AppState>(
       builder: (context, appState, child) {
         final user = appState.currentUser;
@@ -461,24 +545,23 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           );
         }
 
-        // If no user data but Firebase user exists, try loading user data
+        // If no user profile loaded yet, but Firebase user exists, load user profile
         if (user == null && firebaseUser != null) {
-          // Trigger user data loading if not already loading
           if (!appState.isLoading) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               appState.loadUserData(firebaseUser.uid);
             });
           }
-          return const Scaffold(
+          return Scaffold(
             body: Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CircularProgressIndicator(color: AppTheme.primaryGreen),
-                  SizedBox(height: 16),
+                  const CircularProgressIndicator(color: AppTheme.primaryGreen),
+                  const SizedBox(height: 16),
                   Text(
-                    'Loading your profile...',
-                    style: TextStyle(
+                    l10n?.loading ?? 'Loading your profile...',
+                    style: const TextStyle(
                       fontSize: 16,
                       color: AppTheme.textSecondary,
                     ),
@@ -489,53 +572,28 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           );
         }
 
-        // If no Firebase user, show login message
-        if (firebaseUser == null) {
-          return const Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.login, size: 64, color: AppTheme.primaryGreen),
-                  SizedBox(height: 16),
-                  Text(
-                    'Please log in to continue',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: AppTheme.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
+        // If no user at all, return LoginScreen
+        if (user == null) {
+          return const LoginScreen();
         }
 
-        // If user data failed to load, show error and redirect to login
-        if (user == null && appState.error != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(appState.error!),
-                backgroundColor: AppTheme.error,
-                duration: const Duration(seconds: 3),
-              ),
-            );
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (context) => const LoginScreen()),
-            );
-          });
-          return const Scaffold(
-            body: Center(
-              child: CircularProgressIndicator(color: AppTheme.primaryGreen),
-            ),
-          );
-        }
+        final isFpo = user.userType == UserType.fpo;
+        final isBulkBuyer = user.userType == UserType.buyer;
+        final isRetailBuyer = user.userType == UserType.retailBuyer;
 
-        final isBuyer = user?.userType == UserType.buyer;
-        final screens = isBuyer ? _buyerScreens : _farmerScreens;
-        final navItems = isBuyer ? _buyerNavItems : _farmerNavItems;
+        final screens = isFpo
+            ? _fpoScreens
+            : (isBulkBuyer
+                ? _bulkBuyerScreens
+                : (isRetailBuyer ? _retailBuyerScreens : _farmerScreens));
+
+        final navItems = isFpo
+            ? _getFpoNavItems(l10n)
+            : (isBulkBuyer
+                ? _getBulkBuyerNavItems(l10n)
+                : (isRetailBuyer
+                    ? _getRetailBuyerNavItems(l10n)
+                    : _getFarmerNavItems(l10n)));
 
         // Ensure current index is within bounds
         if (_currentIndex >= screens.length) {
@@ -543,34 +601,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         }
 
         return Scaffold(
-          appBar: AppBar(
-            backgroundColor: AppTheme.background,
-            foregroundColor: AppTheme.textPrimary,
-            elevation: 0,
-            centerTitle: true,
-            title: Text(
-              _getScreenTitle(isBuyer),
-              style: GoogleFonts.outfit(
-                // Using Outfit if available, or just TextStyle
-                fontWeight: FontWeight.w600,
-                color: AppTheme.primaryColor,
-              ),
+          body: SafeArea(
+            bottom: false,
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: screens[_currentIndex],
             ),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.logout),
-                color: AppTheme.textSecondary,
-                onPressed: () async {
-                  await FirebaseAuth.instance.signOut();
-                  appState.clearUser();
-                },
-                tooltip: 'Logout',
-              ),
-            ],
-          ),
-          body: FadeTransition(
-            opacity: _fadeAnimation,
-            child: screens[_currentIndex],
           ),
           bottomNavigationBar: Container(
             margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
@@ -602,7 +638,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     selectedItemColor: AppTheme.primaryColor,
                     unselectedItemColor: AppTheme.textSecondary,
                     showSelectedLabels: true,
-                    showUnselectedLabels: false, // Cleaner look for 6 items
+                    showUnselectedLabels: false,
                     selectedLabelStyle: const TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 10,
@@ -621,41 +657,5 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         );
       },
     );
-  }
-
-  String _getScreenTitle(bool isBuyer) {
-    if (isBuyer) {
-      switch (_currentIndex) {
-        case 0:
-          return 'Marketplace';
-        case 1:
-          return 'Profile';
-        case 2:
-          return 'Loans';
-        case 3:
-          return 'Contracts';
-        case 4:
-          return 'Analytics';
-        default:
-          return 'AgriChain';
-      }
-    } else {
-      switch (_currentIndex) {
-        case 0:
-          return 'Home';
-        case 1:
-          return 'My Crops';
-        case 2:
-          return 'Loans';
-        case 3:
-          return 'Marketplace';
-        case 4:
-          return 'Land Analysis';
-        case 5:
-          return 'Profile';
-        default:
-          return 'AgriChain';
-      }
-    }
   }
 }

@@ -1,0 +1,579 @@
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import '../../providers/app_state.dart';
+import '../../services/database_service.dart';
+import '../../theme/app_theme.dart';
+
+/// Screen 4: FPO Earnings & Confirmed Settlements Passbook
+/// Clean, simple passbook matching the Farmer app, showing exactly how much
+/// the FPO has made, what is confirmed, and what is in escrow.
+class FpoSettlementScreen extends StatefulWidget {
+  const FpoSettlementScreen({super.key});
+
+  @override
+  State<FpoSettlementScreen> createState() => _FpoSettlementScreenState();
+}
+
+class _FpoSettlementScreenState extends State<FpoSettlementScreen> {
+  final DatabaseService _dbService = DatabaseService();
+  String _selectedFilter = 'All';
+
+  @override
+  Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
+    final user = appState.currentUser;
+    final fpoId = user?.id.isNotEmpty == true ? user!.id : 'fpo_karnal_01';
+
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _dbService.streamFpoOrders(fpoId: fpoId),
+      builder: (context, snapshot) {
+        final orders = snapshot.data ?? [];
+        final List<Map<String, dynamic>> settlementRecords = [];
+
+        for (final o in orders) {
+          final isDelivered = (o['status'] == 'completed' || o['status'] == 'delivered');
+          final isEscrow = !isDelivered;
+          final gross = (o['totalAmount'] as num?)?.toDouble() ?? 0.0;
+          final freight = gross * 0.015;
+          final cess = gross * 0.005;
+          final fee = gross * 0.002;
+          final net = gross - freight - cess - fee;
+
+          settlementRecords.add({
+            'orderId': o['orderId'] ?? o['id'] ?? 'ORD',
+            'type': o['isMultiFpo'] == true ? 'Multi-FPO Shared Order' : 'Single FPO Direct Order',
+            'buyer': o['buyerName'] ?? o['buyer'] ?? 'Institutional Buyer',
+            'crop': o['cropName'] ?? o['crop'] ?? 'Produce',
+            'yourShareMT': (((o['quantityQtl'] as num?)?.toDouble() ?? 0.0) / 10.0),
+            'date': o['createdAt']?.toString().split('T').first ?? 'Recent',
+            'grossAmount': gross,
+            'freightDeduction': freight,
+            'mandiCessDeduction': cess,
+            'platformFee': fee,
+            'netAmount': net > 0 ? net : gross,
+            'status': isEscrow ? 'IN ESCROW' : 'CREDITED TO BANK',
+            'statusColor': isEscrow ? const Color(0xFFD97706) : const Color(0xFF15803D),
+            'utr': 'TXN-${o['id'] ?? '8910'}',
+            'bank': 'State Bank of India •••• 2019',
+            'isEscrow': isEscrow,
+          });
+        }
+
+        // Calculate totals
+        double totalConfirmedMade = 0.0;
+        double totalInEscrow = 0.0;
+
+        for (var r in settlementRecords) {
+          if (r['isEscrow'] == true) {
+            totalInEscrow += (r['netAmount'] as double);
+          } else {
+            totalConfirmedMade += (r['netAmount'] as double);
+          }
+        }
+
+        final filteredList = settlementRecords.where((r) {
+          if (_selectedFilter == 'Confirmed') return r['isEscrow'] == false;
+          if (_selectedFilter == 'In Escrow') return r['isEscrow'] == true;
+          return true;
+        }).toList();
+
+        return Scaffold(
+          backgroundColor: AppTheme.backgroundGreen,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0.5,
+            foregroundColor: const Color(0xFF1B5E20),
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Earnings & Settlements',
+                  style: GoogleFonts.outfit(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF1B5E20),
+                  ),
+                ),
+                Text(
+                  'Direct Commercial Bank Credits • Smart Escrow Passbook',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 1. Big Confirmed Earnings Banner Card (Matching Farmer Passbook)
+                _buildEarningsSummaryCard(totalConfirmedMade, totalInEscrow),
+                const SizedBox(height: 16),
+
+                // 2. Linked Settlement Bank Account Card
+                _buildSettlementBankCard(),
+                const SizedBox(height: 20),
+
+                // 3. Filter Chips
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Settlement Passbook',
+                      style: GoogleFonts.outfit(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    Row(
+                      children: ['All', 'Confirmed', 'In Escrow'].map((filter) {
+                        final isSel = _selectedFilter == filter;
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: ChoiceChip(
+                            label: Text(filter),
+                            selected: isSel,
+                            selectedColor: const Color(0xFF2E7D32),
+                            backgroundColor: Colors.white,
+                            labelStyle: TextStyle(
+                              color: isSel ? Colors.white : const Color(0xFF334155),
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            onSelected: (val) {
+                              if (val) setState(() => _selectedFilter = filter);
+                            },
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // 4. List of Settlement Transaction Cards or Clean Empty State
+                if (filteredList.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(32),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.account_balance_wallet_outlined,
+                          size: 56,
+                          color: AppTheme.textSecondary.withValues(alpha: 0.4),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'No Settlements Yet',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Commercial payouts and escrow releases from completed bulk orders will credit your verified bank account and appear here.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  ...filteredList.map((record) => _buildSettlementCard(record)),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEarningsSummaryCard(double confirmed, double inEscrow) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: AppTheme.softShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Total Confirmed Earnings',
+                style: TextStyle(color: Colors.white70, fontSize: 12.5, fontWeight: FontWeight.w500),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.verified, size: 12, color: Color(0xFF69F0AE)),
+                    SizedBox(width: 4),
+                    Text(
+                      '100% Tax-Exempt Sec 10(1)',
+                      style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '₹${(confirmed / 100000).toStringAsFixed(2)} Lakhs',
+            style: GoogleFonts.outfit(
+              fontSize: 32,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              letterSpacing: -0.5,
+            ),
+          ),
+          Text(
+            'Exact: ₹${confirmed.toStringAsFixed(0)} credited directly to bank account',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+          const Divider(height: 24, color: Colors.white24),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Active in Escrow', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                    const SizedBox(height: 2),
+                    Text(
+                      '₹${(inEscrow / 100000).toStringAsFixed(2)} Lakhs',
+                      style: const TextStyle(color: Color(0xFFFEF08A), fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              Container(width: 1, height: 30, color: Colors.white24),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Settled Orders', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                    const SizedBox(height: 2),
+                    const Text(
+                      '3 Orders Completed',
+                      style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettlementBankCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: AppTheme.softShadow,
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2E7D32).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.account_balance, color: Color(0xFF2E7D32), size: 24),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'State Bank of India (Commercial A/C)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
+                ),
+                Text(
+                  'A/C: •••• •••• •••• 2019 • IFSC: SBIN0001824',
+                  style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                ),
+                Text(
+                  'Auto-credit via NACH / RTGS upon buyer delivery',
+                  style: TextStyle(fontSize: 10.5, color: Color(0xFF15803D), fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.check_circle, color: Color(0xFF15803D), size: 20),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettlementCard(Map<String, dynamic> item) {
+    final isEscrow = item['isEscrow'] as bool;
+    final netAmount = item['netAmount'] as double;
+    final statusColor = item['statusColor'] as Color;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: AppTheme.softShadow,
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: InkWell(
+        onTap: () => _showSettlementBreakdownModal(item),
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top row: order id & status
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          item['orderId'] as String,
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF334155)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        item['type'] as String,
+                        style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+                    ),
+                    child: Text(
+                      item['status'] as String,
+                      style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: statusColor),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // Middle: Buyer, crop, and Net Amount
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item['crop'] as String,
+                          style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                        ),
+                        Text(
+                          '${item['buyer']} • ${((item['yourShareMT'] as double) * 10).toStringAsFixed(0)} Qtl',
+                          style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        '+ ₹${netAmount.toStringAsFixed(0)}',
+                        style: GoogleFonts.inter(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: isEscrow ? const Color(0xFFD97706) : const Color(0xFF2E7D32),
+                        ),
+                      ),
+                      Text(
+                        isEscrow ? 'Awaiting Release' : 'Net Credited',
+                        style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const Divider(height: 20),
+
+              // Bottom details row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(isEscrow ? Icons.lock_clock : Icons.receipt_long, size: 13, color: const Color(0xFF64748B)),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Ref: ${item['utr']}',
+                        style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B), fontFamily: 'monospace'),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: const [
+                      Text('View Slip', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2E7D32))),
+                      Icon(Icons.chevron_right, size: 16, color: Color(0xFF2E7D32)),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showSettlementBreakdownModal(Map<String, dynamic> item) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Settlement Breakdown Slip',
+                    style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close)),
+                ],
+              ),
+              Text(
+                'Order: ${item['orderId']} • Buyer: ${item['buyer']}',
+                style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+              ),
+              const Divider(height: 24),
+
+              _buildModalSlipRow('Crop & Weight', '${item['crop']} (${((item['yourShareMT'] as double) * 10).toStringAsFixed(0)} Qtl)'),
+              _buildModalSlipRow('Gross Agreed Value', '₹${(item['grossAmount'] as double).toStringAsFixed(0)}'),
+              _buildModalSlipRow('Freight Deduction', '- ₹${(item['freightDeduction'] as double).toStringAsFixed(0)}', isDeduction: true),
+              _buildModalSlipRow('Mandi Cess (0.5%)', '- ₹${(item['mandiCessDeduction'] as double).toStringAsFixed(0)}', isDeduction: true),
+              _buildModalSlipRow('Platform Tech Fee (0.2%)', '- ₹${(item['platformFee'] as double).toStringAsFixed(0)}', isDeduction: true),
+              const Divider(height: 16),
+              _buildModalSlipRow(
+                'Net Credited Payout',
+                '₹${(item['netAmount'] as double).toStringAsFixed(0)}',
+                isHighlight: true,
+              ),
+              const SizedBox(height: 10),
+              _buildModalSlipRow('Settled Into', item['bank'] as String),
+              _buildModalSlipRow('Banking UTR', item['utr'] as String),
+              const SizedBox(height: 20),
+
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Tax-Exempt Settlement Slip downloaded (PDF).'),
+                        backgroundColor: Color(0xFF2E7D32),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.download, size: 16),
+                  label: const Text('Download Commercial Settlement Slip (PDF)'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2E7D32),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildModalSlipRow(String label, String value, {bool isDeduction = false, bool isHighlight = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isHighlight ? 14 : 12,
+              fontWeight: isHighlight ? FontWeight.bold : FontWeight.normal,
+              color: const Color(0xFF475569),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isHighlight ? 15 : 12,
+              fontWeight: FontWeight.bold,
+              color: isHighlight
+                  ? const Color(0xFF15803D)
+                  : (isDeduction ? Colors.red.shade700 : const Color(0xFF0F172A)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

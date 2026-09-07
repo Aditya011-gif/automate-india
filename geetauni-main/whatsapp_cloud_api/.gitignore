@@ -1,0 +1,5 @@
+node_modules/
+.env
+*.exe
+cloudflared.exe
+.DS_Store

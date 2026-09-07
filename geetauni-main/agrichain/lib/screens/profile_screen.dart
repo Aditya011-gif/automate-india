@@ -8,16 +8,18 @@ import '../providers/app_state.dart';
 import '../models/firestore_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/custom_app_bar.dart';
-import '../screens/rating_screen.dart';
-import '../screens/debug_sample_users_screen.dart';
-import '../screens/profile_edit_screen.dart';
-import '../screens/wallet_connection_screen.dart';
-import '../screens/transaction_history_screen.dart';
-import '../screens/mint_land_nft_screen.dart';
-import '../screens/mint_crop_nft_screen.dart';
+import 'retail_buyer/rating_screen.dart';
+import 'debug_sample_users_screen.dart';
+import 'profile_edit_screen.dart';
+import 'wallet_connection_screen.dart';
+import 'transaction_history_screen.dart';
+import 'farmer/mint_land_nft_screen.dart';
+import 'farmer/mint_crop_nft_screen.dart';
 import '../config/app_config.dart';
 import '../services/profile_service.dart';
 import '../services/wallet_service.dart';
+import '../widgets/language_switcher.dart';
+import 'package:agrichain/l10n/app_localizations.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -117,13 +119,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
     return Scaffold(
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) {
           return [
             CustomAppBar(
-              title: 'Profile',
+              title: l10n?.profileTitle ?? 'Profile',
               actions: [
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Center(child: LanguageSwitcherPill(isDark: true)),
+                ),
                 IconButton(
                   icon: const Icon(Icons.edit),
                   onPressed: () => _editProfile(context),
@@ -268,8 +276,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     const SizedBox(width: 4),
                                     Text(
                                       user?.userType == UserType.farmer
-                                          ? 'Verified Farmer'
-                                          : 'Verified Buyer',
+                                          ? (appState.locale.languageCode == 'hi' ? 'सत्यापित किसान' : 'Verified Farmer')
+                                          : (appState.locale.languageCode == 'hi' ? 'सत्यापित खरीदार' : 'Verified Buyer'),
                                       style: const TextStyle(
                                         color: AppTheme.primaryGreen,
                                         fontSize: 12,
@@ -323,6 +331,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
         final userType = appState.currentUser?.userType;
 
+        final isHindi = appState.locale.languageCode == 'hi';
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -331,7 +340,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Row(
                 children: [
                   Text(
-                    'Profile Details',
+                    isHindi ? 'प्रोफ़ाइल विवरण' : 'Profile Details',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: AppTheme.darkGreen,
@@ -341,7 +350,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   TextButton.icon(
                     onPressed: () => _editProfile(context),
                     icon: const Icon(Icons.edit, size: 16),
-                    label: const Text('Edit'),
+                    label: Text(isHindi ? 'संपादित करें' : 'Edit'),
                   ),
                 ],
               ),
@@ -705,24 +714,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildWalletSection() {
     return Consumer<AppState>(
       builder: (context, appState, child) {
+        final l10n = AppLocalizations.of(context);
+        final isHindi = appState.locale.languageCode == 'hi';
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'My Wallet',
+                    l10n?.myWallet ?? 'Digital Wallet',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: AppTheme.darkGreen,
                     ),
                   ),
+                  const Spacer(),
                   TextButton(
                     onPressed: () => _showWalletDetails(context),
-                    child: const Text('View History'),
+                    child: Text(isHindi ? 'इतिहास देखें' : 'View History'),
                   ),
                 ],
               ),
@@ -736,7 +748,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 children: [
                   _buildWalletBalanceCard(
                     context,
-                    'Available Balance',
+                    l10n?.availableBalance ?? 'Available Balance',
                     '₹${appState.currentUser?.walletBalance.toStringAsFixed(0) ?? '0'}',
                     Colors.white,
                     AppTheme.primaryGreen,
@@ -746,7 +758,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(width: 16),
                   _buildWalletBalanceCard(
                     context,
-                    'Crypto Assets',
+                    isHindi ? 'क्रिप्टो संपत्तियां' : 'Crypto Assets',
                     '${_walletBalance.toStringAsFixed(4)} ETH',
                     AppTheme.darkGreen,
                     Colors.white,
@@ -762,7 +774,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Expanded(
                   child: _buildActionButton(
                     context,
-                    'Add Money',
+                    l10n?.addMoney ?? 'Add Money',
                     Icons.add_circle_outline,
                     AppTheme.primaryGreen,
                     () => _addMoney(context),
@@ -772,7 +784,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Expanded(
                   child: _buildActionButton(
                     context,
-                    'Withdraw',
+                    l10n?.withdraw ?? 'Withdraw',
                     Icons.arrow_circle_up,
                     AppTheme.darkGrey,
                     () => _withdrawMoney(context),
@@ -880,6 +892,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildBlockchainStatusCard() {
+    final l10n = AppLocalizations.of(context);
+    final isHindi = Localizations.localeOf(context).languageCode == 'hi';
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
@@ -906,8 +921,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 Text(
                   _isWalletConnected
-                      ? 'Wallet Connected'
-                      : 'Wallet Disconnected',
+                      ? (isHindi ? 'वॉलेट कनेक्टेड' : 'Wallet Connected')
+                      : (l10n?.walletDisconnected ?? 'Wallet Disconnected'),
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     color: _isWalletConnected
@@ -924,7 +939,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           if (!_isWalletConnected)
-            TextButton(onPressed: _connectWallet, child: const Text('Connect'))
+            TextButton(onPressed: _connectWallet, child: Text(l10n?.connectWallet ?? 'Connect'))
           else
             IconButton(
               icon: const Icon(Icons.logout, size: 20),
@@ -945,40 +960,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // Helper method for wallet card was replaced by _buildWalletBalanceCard
 
   Widget _buildMenuSection() {
+    final appState = Provider.of<AppState>(context);
+    final l10n = AppLocalizations.of(context);
+    final isHindi = appState.locale.languageCode == 'hi';
+
     return Column(
       children: [
-        _buildMenuGroup('Account', [
+        _buildMenuGroup(l10n?.profileTitle ?? 'Account', [
           _MenuItemData(
             icon: Icons.person_outline,
-            title: 'Personal Information',
-            subtitle: 'Update your profile details',
+            title: l10n?.personalInfo ?? 'Personal Information',
+            subtitle: l10n?.personalInfoDesc ?? 'Update your profile details',
             onTap: () => _editProfile(context),
           ),
           _MenuItemData(
             icon: Icons.star_outline,
-            title: 'Ratings & Reviews',
-            subtitle: 'View your ratings and feedback',
+            title: l10n?.ratingsReviews ?? 'Ratings & Reviews',
+            subtitle: l10n?.ratingsReviewsDesc ?? 'View your ratings and feedback',
             onTap: () => _showAllRatings(context),
           ),
           _MenuItemData(
             icon: Icons.security,
-            title: 'Security',
-            subtitle: 'Password, 2FA, biometric',
+            title: l10n?.security ?? 'Security',
+            subtitle: l10n?.securityDesc ?? 'Password, 2FA, biometric',
             onTap: () => _showSecuritySettings(context),
           ),
           _MenuItemData(
             icon: Icons.verified_user,
-            title: 'Verification',
-            subtitle: 'KYC and document verification',
+            title: l10n?.kycStatus ?? 'Verification',
+            subtitle: isHindi ? 'केवाईसी और दस्तावेज़ सत्यापन' : 'KYC and document verification',
             onTap: () => _showVerificationStatus(context),
           ),
         ]),
         const SizedBox(height: 24),
-        _buildMenuGroup('Blockchain & NFTs', [
+        _buildMenuGroup(isHindi ? 'ब्लॉकचेन और एनएफटी' : 'Blockchain & NFTs', [
           _MenuItemData(
             icon: Icons.landscape,
-            title: 'Mint Land NFT',
-            subtitle: 'Tokenize your land property',
+            title: isHindi ? 'भूमि एनएफटी बनाएं' : 'Mint Land NFT',
+            subtitle: isHindi ? 'अपनी भूमि का डिजिटल टोकन बनाएं' : 'Tokenize your land property',
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
@@ -988,8 +1007,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           _MenuItemData(
             icon: Icons.agriculture,
-            title: 'Mint Crop NFT',
-            subtitle: 'Tokenize your crop harvest',
+            title: isHindi ? 'फसल एनएफटी बनाएं' : 'Mint Crop NFT',
+            subtitle: isHindi ? 'अपनी फसल का डिजिटल टोकन बनाएं' : 'Tokenize your crop harvest',
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
@@ -999,19 +1018,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           _MenuItemData(
             icon: Icons.account_balance_wallet,
-            title: 'Blockchain Wallet',
-            subtitle: _isWalletConnected ? 'Connected' : 'Not connected',
+            title: isHindi ? 'ब्लॉकचेन वॉलेट' : 'Blockchain Wallet',
+            subtitle: _isWalletConnected
+                ? (isHindi ? 'कनेक्टेड' : 'Connected')
+                : (isHindi ? 'कनेक्ट नहीं है' : 'Not connected'),
             onTap: _isWalletConnected
                 ? _viewTransactionHistory
                 : _connectWallet,
           ),
         ]),
         const SizedBox(height: 24),
-        _buildMenuGroup('Preferences', [
+        _buildMenuGroup(isHindi ? 'प्राथमिकताएं' : 'Preferences', [
           _MenuItemData(
             icon: Icons.notifications_outlined,
-            title: 'Notifications',
-            subtitle: _notificationsEnabled ? 'Enabled' : 'Disabled',
+            title: isHindi ? 'सूचनाएं' : 'Notifications',
+            subtitle: _notificationsEnabled
+                ? (isHindi ? 'सक्रिय' : 'Enabled')
+                : (isHindi ? 'निष्क्रिय' : 'Disabled'),
             onTap: () => _showNotificationSettings(context),
             trailing: Switch(
               value: _notificationsEnabled,
@@ -1025,14 +1048,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           _MenuItemData(
             icon: Icons.language,
-            title: 'Language',
-            subtitle: _selectedLanguage,
+            title: l10n?.language ?? 'Language',
+            subtitle: isHindi ? 'हिन्दी (Hindi)' : 'English',
             onTap: () => _showLanguageSettings(context),
           ),
           _MenuItemData(
             icon: Icons.fingerprint,
-            title: 'Biometric Login',
-            subtitle: _biometricEnabled ? 'Enabled' : 'Disabled',
+            title: isHindi ? 'बायोमेट्रिक लॉगिन' : 'Biometric Login',
+            subtitle: _biometricEnabled
+                ? (isHindi ? 'सक्रिय' : 'Enabled')
+                : (isHindi ? 'निष्क्रिय' : 'Disabled'),
             onTap: () => _toggleBiometric(),
             trailing: Switch(
               value: _biometricEnabled,
@@ -1042,20 +1067,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ]),
         const SizedBox(height: 24),
-        _buildMenuGroup('Account', [
-          // Debug option - only show in debug mode
-          if (kDebugMode && AppConfig.enableDebugMode)
-            _MenuItemData(
-              icon: Icons.bug_report,
-              title: 'Generate Sample Users',
-              subtitle: 'Create test accounts for development',
-              onTap: () => _navigateToDebugScreen(context),
-              textColor: Colors.orange,
-            ),
+        _buildMenuGroup(isHindi ? 'खाता सेटिंग्स' : 'Account', [
           _MenuItemData(
             icon: Icons.logout,
-            title: 'Logout',
-            subtitle: 'Sign out of your account',
+            title: l10n?.logout ?? 'Logout',
+            subtitle: isHindi ? 'अपने खाते से लॉग आउट करें' : 'Sign out of your account',
             onTap: () => _logout(context),
             textColor: Colors.red,
           ),
@@ -1276,44 +1292,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showLanguageSettings(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Language'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioGroup<String>(
-              groupValue: _selectedLanguage,
-              onChanged: (value) {
-                setState(() {
-                  _selectedLanguage = value!;
-                });
-                Navigator.pop(context);
-              },
-              child: Column(
-                children: [
-                  RadioListTile<String>(
-                    title: const Text('English'),
-                    value: 'English',
-                  ),
-                  RadioListTile<String>(
-                    title: const Text('हिंदी (Hindi)'),
-                    value: 'Hindi',
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
+    LanguageSelectorSheet.show(context);
   }
 
   void _toggleBiometric() {

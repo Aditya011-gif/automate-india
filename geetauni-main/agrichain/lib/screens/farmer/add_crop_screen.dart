@@ -1,0 +1,1307 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+import '../../providers/app_state.dart';
+import '../../theme/app_theme.dart';
+import '../../services/blockchain_service.dart';
+import '../../services/gemini_crop_assay_service.dart';
+import '../../widgets/enhanced_app_bar.dart';
+import '../../models/crop.dart';
+import '../../utils/crop_image_helper.dart';
+
+enum CropAction { sell }
+
+class AddCropScreen extends StatefulWidget {
+  const AddCropScreen({super.key});
+
+  @override
+  State<AddCropScreen> createState() => _AddCropScreenState();
+}
+
+class _AddCropScreenState extends State<AddCropScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController(text: 'Basmati Paddy 1121');
+  final _descriptionController = TextEditingController(
+    text: 'Premium Grade A harvest with optimum grain length, sorted and ready for mill procurement.',
+  );
+  final _quantityController = TextEditingController(text: '500 kg');
+  final _priceController = TextEditingController(text: '35.00');
+  final _locationController = TextEditingController(text: 'Karnal Cluster, Haryana');
+
+  String? _selectedImagePath;
+  XFile? _cropImageFile;
+  XFile? _signatureImage;
+  bool _isUploading = false;
+  DateTime _harvestDate = DateTime.now();
+
+  // New fields for enhanced crop listing
+  CropType? _selectedCropType = CropType.rice;
+  CropCategory? _selectedCategory = CropCategory.grains;
+  QualityGrade _selectedQualityGrade = QualityGrade.premium;
+  final List<CertificationType> _selectedCertifications = [CertificationType.organic];
+  CropPricing? _currentPricing;
+
+  // AI Quality Assaying State
+  bool _isAnalyzingWithAi = false;
+  GeminiCropAssayResult? _aiAssayResult;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentPricing = CropDataHelper.getPricingForCropType(CropType.rice);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    _quantityController.dispose();
+    _priceController.dispose();
+    _locationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _selectImage() async {
+    final ImagePicker picker = ImagePicker();
+    final ImageSource? source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Upload Crop Sample Photo',
+                style: GoogleFonts.outfit(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.darkGreen,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Take a photo of your harvested grain or choose an existing photo from gallery for AI assaying.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.pop(ctx, ImageSource.camera),
+                      icon: const Icon(Icons.camera_alt, color: Color(0xFF1B5E20)),
+                      label: const Text('Camera', style: TextStyle(color: Color(0xFF1B5E20), fontWeight: FontWeight.bold)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        side: const BorderSide(color: Color(0xFF1B5E20)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => Navigator.pop(ctx, ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library, color: Colors.white),
+                      label: const Text('Gallery', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        backgroundColor: const Color(0xFF1B5E20),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    try {
+      final XFile? image = await picker.pickImage(
+        source: source,
+        imageQuality: 75,
+        maxWidth: 800,
+        maxHeight: 800,
+      );
+
+      if (image != null) {
+        setState(() {
+          _cropImageFile = image;
+          _selectedImagePath = image.path;
+          _aiAssayResult = null;
+        });
+
+        // Prompt farmer for mandatory automated AI Quality Assaying
+        if (mounted) {
+          _showAutoAiAssayPromptDialog();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking crop image: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to pick crop image: $e')),
+        );
+      }
+    }
+  }
+
+  void _showAutoAiAssayPromptDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.auto_awesome, color: AppTheme.primaryGreen),
+            const SizedBox(width: 8),
+            Text(
+              'Automated AI Crop Assaying',
+              style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Grain sample photo captured! AI will now automatically analyze your crop sample for:',
+              style: GoogleFonts.inter(fontSize: 12, color: Colors.grey.shade800, height: 1.4),
+            ),
+            const SizedBox(height: 10),
+            _buildAssayPoint('Moisture % (Optimal ≤ 12.0%)'),
+            _buildAssayPoint('Broken Grain % (Grade A ≤ 3.0%)'),
+            _buildAssayPoint('Foreign Matter & Seed Purity Index'),
+            _buildAssayPoint('AGMARK Quality Grade Certification'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryGreen.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.primaryGreen.withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                '🔒 Listing Gate: You can publish your crop only after AI assay verification is complete.',
+                style: GoogleFonts.inter(fontSize: 11, color: AppTheme.darkGreen, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _runAiAssaying();
+            },
+            icon: const Icon(Icons.flash_on, size: 16),
+            label: const Text('Start Auto AI Assaying'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryGreen,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAssayPoint(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          const Icon(Icons.check_circle, color: AppTheme.primaryGreen, size: 15),
+          const SizedBox(width: 6),
+          Text(text, style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500, color: Colors.grey.shade800)),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runAiAssaying() async {
+    if (_cropImageFile == null) return;
+
+    setState(() => _isAnalyzingWithAi = true);
+
+    try {
+      final bytes = await _cropImageFile!.readAsBytes();
+      final result = await GeminiCropAssayService().analyzeCropSample(
+        imageBytes: bytes,
+        cropCategory: _selectedCategory != null ? CropDataHelper.getCategoryDisplayName(_selectedCategory!) : 'Grains',
+        cropVariety: _nameController.text.isNotEmpty ? _nameController.text : 'Wheat',
+      );
+
+      if (mounted) {
+        setState(() {
+          _aiAssayResult = result;
+          _isAnalyzingWithAi = false;
+          _selectedQualityGrade = QualityGrade.premium;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ AI Assaying Complete: ${result.agmarkGrade} Verified! Listing Unlocked.'),
+            backgroundColor: AppTheme.primaryGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('AI Assaying error: $e');
+      if (mounted) {
+        setState(() => _isAnalyzingWithAi = false);
+      }
+    }
+  }
+
+  Future<void> _pickSignatureImage() async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 70,
+        maxWidth: 1024,
+      );
+
+      if (image != null) {
+        setState(() {
+          _signatureImage = image;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error picking signature image: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to pick image: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _selectHarvestDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _harvestDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppTheme.primaryGreen,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null && picked != _harvestDate) {
+      setState(() {
+        _harvestDate = picked;
+      });
+    }
+  }
+
+  void _onCropTypeChanged(CropType? cropType) {
+    setState(() {
+      _selectedCropType = cropType;
+      if (cropType != null) {
+        _selectedCategory = CropDataHelper.getCategoryForCropType(cropType);
+        _currentPricing = CropDataHelper.getPricingForCropType(cropType);
+        if (_nameController.text.isEmpty) {
+          _nameController.text = CropDataHelper.getCropDisplayName(cropType);
+        }
+      } else {
+        _selectedCategory = null;
+        _currentPricing = null;
+      }
+    });
+  }
+
+  void _toggleCertification(CertificationType certification) {
+    setState(() {
+      if (_selectedCertifications.contains(certification)) {
+        _selectedCertifications.remove(certification);
+      } else {
+        _selectedCertifications.add(certification);
+      }
+    });
+  }
+
+  Widget _buildPricingInfo() {
+    if (_currentPricing == null) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: AppTheme.lightGreen.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.lightGreen),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Market Pricing Information',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.darkGreen,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_currentPricing!.msp > 0) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('MSP:', style: TextStyle(color: AppTheme.grey)),
+                Text(
+                  '₹${(_currentPricing!.msp / 100).toStringAsFixed(2)}/kg',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.darkGreen,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+          ],
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Market Price:', style: TextStyle(color: AppTheme.grey)),
+              Text(
+                '₹${(_currentPricing!.marketPrice / 100).toStringAsFixed(2)}/kg',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.primaryGreen,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Season:', style: TextStyle(color: AppTheme.grey)),
+              Text(
+                _currentPricing!.season,
+                style: const TextStyle(fontSize: 12, color: AppTheme.grey),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _uploadCrop() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    if (_selectedImagePath == null || _aiAssayResult == null) {
+      if (_selectedImagePath == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select an image for your crop'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      } else {
+        _showAutoAiAssayPromptDialog();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚠️ AI Assaying Required: Please run automated AI quality assay first.'),
+            backgroundColor: Colors.deepOrange,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _isUploading = true;
+    });
+
+    try {
+      final appState = Provider.of<AppState>(context, listen: false);
+      final blockchainService = BlockchainService();
+
+      // Step 1: Upload image to IPFS
+      final ipfsHash = await blockchainService.uploadImageToIPFS(
+        _selectedImagePath ?? 'ipfs_hash_default',
+      );
+
+      // Step 2: Mint NFT for the crop
+      final nftTokenId = await blockchainService.mintNFT(
+        appState.currentUser?.name ?? 'Ramesh Kumar',
+        _nameController.text,
+        _descriptionController.text,
+        ipfsHash,
+      );
+
+      String? cropSignatureUrl;
+      if (_signatureImage != null) {
+        try {
+          final bytes = await _signatureImage!.readAsBytes();
+          final base64String = base64Encode(bytes);
+          cropSignatureUrl = 'data:image/jpeg;base64,$base64String';
+        } catch (e) {
+          debugPrint('Error converting crop signature: $e');
+        }
+      }
+
+      String cropImageUrl = _selectedImagePath ?? '';
+      if (_cropImageFile != null) {
+        try {
+          final bytes = await _cropImageFile!.readAsBytes();
+          final base64String = base64Encode(bytes);
+          cropImageUrl = 'data:image/jpeg;base64,$base64String';
+        } catch (e) {
+          debugPrint('Error converting crop image: $e');
+        }
+      }
+      if (cropImageUrl.isEmpty) {
+        cropImageUrl = CropImageHelper.getContextualCropImageUrl(_nameController.text);
+      }
+
+      // Step 3: Create crop using AppState
+      final success = await appState.createCrop(
+        name: _nameController.text,
+        location: _locationController.text.isEmpty
+            ? appState.currentUser?.location ?? 'Karnal Cluster, Haryana'
+            : _locationController.text,
+        price: double.parse(_priceController.text),
+        quantity: _quantityController.text,
+        harvestDate: _harvestDate,
+        imageUrl: cropImageUrl,
+        description: _descriptionController.text,
+        cropType: _selectedCropType ?? CropType.wheat,
+        category: _selectedCategory ?? CropCategory.grains,
+        qualityGrade: _selectedQualityGrade,
+        isNFT: true,
+        biddingType: BiddingType.fixedPrice,
+        signatureUrl: cropSignatureUrl,
+      );
+
+      if (success) {
+        debugPrint('✅ Crop created successfully');
+        final cropId = DateTime.now().millisecondsSinceEpoch.toString();
+        await blockchainService.createSellOrder(
+          cropId,
+          double.parse(_priceController.text),
+          _quantityController.text,
+          nftTokenId,
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('🌾 Crop listing published successfully! Live in buyer marketplace.'),
+            backgroundColor: Color(0xFF1B5E20),
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isAssayVerified = _aiAssayResult != null && _cropImageFile != null;
+
+    return Scaffold(
+      appBar: const EnhancedAppBar(
+        title: 'Add New Crop',
+        subtitle: 'List your crop for sale on AgriChain',
+        centerTitle: false,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Sell Type Selection
+              const Text(
+                'How would you like to sell?',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.darkGreen,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _buildSellTypeCard(
+                title: 'Fixed Price',
+                subtitle: 'Set a fixed price for your crop',
+                icon: Icons.local_offer,
+              ),
+              const SizedBox(height: 24),
+
+              // Image Upload
+              const Text(
+                'Crop Image',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.darkGreen,
+                ),
+              ),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: _selectImage,
+                child: Container(
+                  width: double.infinity,
+                  height: 200,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[300]!),
+                  ),
+                  child: _selectedImagePath == null
+                      ? const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.add_a_photo,
+                              size: 48,
+                              color: AppTheme.grey,
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              'Tap to select crop sample image',
+                              style: TextStyle(
+                                color: AppTheme.grey,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Stack(
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              height: double.infinity,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                color: AppTheme.primaryGreen.withValues(
+                                  alpha: 0.1,
+                                ),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: _cropImageFile != null
+                                    ? (kIsWeb
+                                        ? Image.network(
+                                            _cropImageFile!.path,
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Image.file(
+                                            File(_cropImageFile!.path),
+                                            fit: BoxFit.cover,
+                                          ))
+                                    : const Icon(
+                                        Icons.image,
+                                        size: 64,
+                                        color: AppTheme.primaryGreen,
+                                      ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: isAssayVerified ? AppTheme.primaryGreen : Colors.orange,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  isAssayVerified ? Icons.check : Icons.auto_awesome,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+
+              // AI ASSAYING SCANNER / RESULT CARD
+              if (_isAnalyzingWithAi) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F5E9),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF81C784)),
+                  ),
+                  child: Row(
+                    children: [
+                      const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryGreen),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'AI Assaying analyzing moisture %, broken grains %, foreign matter & AGMARK grade...',
+                          style: GoogleFonts.inter(fontSize: 11, color: AppTheme.darkGreen, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              if (_aiAssayResult != null && !_isAnalyzingWithAi) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF0F381E), Color(0xFF1B5E20)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF1B5E20).withValues(alpha: 0.2),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.auto_awesome, color: Color(0xFF69F0AE), size: 18),
+                              const SizedBox(width: 6),
+                              Text(
+                                'AI Crop Assaying Results',
+                                style: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF69F0AE),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              _aiAssayResult!.agmarkGrade,
+                              style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w900, color: const Color(0xFF0F381E)),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          _buildAssayMetricCol('Moisture', '${_aiAssayResult!.moisturePercentage}%', 'Optimal <12%'),
+                          _buildAssayMetricCol('Broken Grain', '${_aiAssayResult!.brokenGrainPercentage}%', 'Grade A <3%'),
+                          _buildAssayMetricCol('Foreign Matter', '${_aiAssayResult!.foreignMatterPercentage}%', 'Clean <0.5%'),
+                          _buildAssayMetricCol('AI Purity', '${_aiAssayResult!.purityScore}%', 'High Purity'),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _aiAssayResult!.assessmentSummary,
+                        style: GoogleFonts.inter(fontSize: 10, color: Colors.white70, height: 1.3),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+
+              // Crop Details
+              const Text(
+                'Crop Details',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.darkGreen,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Crop Name
+              TextFormField(
+                controller: _nameController,
+                decoration: InputDecoration(
+                  labelText: 'Crop Name',
+                  hintText: 'e.g., Organic Wheat',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTheme.primaryGreen,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter crop name';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Crop Type Dropdown
+              DropdownButtonFormField<CropType>(
+                initialValue: _selectedCropType,
+                decoration: InputDecoration(
+                  labelText: 'Crop Type',
+                  hintText: 'Select crop type',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTheme.primaryGreen,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                items: CropDataHelper.cropCategories.entries
+                    .expand(
+                      (categoryEntry) => [
+                        DropdownMenuItem<CropType>(
+                          enabled: false,
+                          value: null,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              CropDataHelper.getCategoryDisplayName(
+                                categoryEntry.key,
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.darkGreen,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ),
+                        ...categoryEntry.value.map(
+                          (cropType) => DropdownMenuItem<CropType>(
+                            value: cropType,
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 16),
+                              child: Text(
+                                CropDataHelper.getCropDisplayName(cropType),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                    .toList(),
+                onChanged: _onCropTypeChanged,
+                validator: (value) {
+                  if (value == null) {
+                    return 'Please select a crop type';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Show pricing info if crop type is selected
+              _buildPricingInfo(),
+
+              // Quality Grade Dropdown
+              DropdownButtonFormField<QualityGrade>(
+                initialValue: _selectedQualityGrade,
+                decoration: InputDecoration(
+                  labelText: 'Quality Grade',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTheme.primaryGreen,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                items: QualityGrade.values
+                    .map(
+                      (grade) => DropdownMenuItem<QualityGrade>(
+                        value: grade,
+                        child: Text(
+                          CropDataHelper.getQualityGradeDisplayName(grade),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _selectedQualityGrade = value;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Certifications
+              const Text(
+                'Certifications',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.darkGreen,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: CertificationType.values.map((certification) {
+                  final isSelected = _selectedCertifications.contains(
+                    certification,
+                  );
+                  return FilterChip(
+                    label: Text(
+                      CropDataHelper.getCertificationDisplayName(certification),
+                    ),
+                    selected: isSelected,
+                    onSelected: (_) => _toggleCertification(certification),
+                    selectedColor: AppTheme.primaryGreen.withValues(alpha: 0.2),
+                    checkmarkColor: AppTheme.primaryGreen,
+                    backgroundColor: Colors.grey[100],
+                    labelStyle: TextStyle(
+                      color: isSelected ? AppTheme.primaryGreen : AppTheme.grey,
+                      fontWeight: isSelected
+                          ? FontWeight.w500
+                          : FontWeight.normal,
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+
+              // Description
+              TextFormField(
+                controller: _descriptionController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: 'Description',
+                  hintText: 'Describe your crop quality, farming methods, etc.',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTheme.primaryGreen,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter description';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Quantity (in kg)
+              TextFormField(
+                controller: _quantityController,
+                decoration: InputDecoration(
+                  labelText: 'Quantity (in kg)',
+                  hintText: 'e.g., 500 kg',
+                  helperText: 'Available harvest volume in kilograms',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTheme.primaryGreen,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Enter quantity';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Price Field (Price per kg)
+              TextFormField(
+                controller: _priceController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: 'Price per kg (₹)',
+                  hintText: 'e.g., 35.00',
+                  helperText: 'Selling price per kilogram in Rupees',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTheme.primaryGreen,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Enter price';
+                  }
+                  if (double.tryParse(value) == null) {
+                    return 'Enter valid number';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // Location
+              TextFormField(
+                controller: _locationController,
+                decoration: InputDecoration(
+                  labelText: 'Location (Optional)',
+                  hintText: 'Farm location',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppTheme.primaryGreen,
+                      width: 2,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Harvest Date
+              GestureDetector(
+                onTap: _selectHarvestDate,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey[300]!),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.calendar_today, color: AppTheme.grey),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Harvest Date',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.grey,
+                            ),
+                          ),
+                          Text(
+                            '${_harvestDate.day}/${_harvestDate.month}/${_harvestDate.year}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: AppTheme.darkGreen,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // Signature Upload Section
+              const Text(
+                'Contract Document Signature',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.darkGreen,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    if (_signatureImage != null) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: kIsWeb
+                            ? Image.network(
+                                _signatureImage!.path,
+                                height: 100,
+                                width: double.infinity,
+                                fit: BoxFit.contain,
+                              )
+                            : Image.file(
+                                File(_signatureImage!.path),
+                                height: 100,
+                                width: double.infinity,
+                                fit: BoxFit.contain,
+                              ),
+                      ),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: _pickSignatureImage,
+                        icon: const Icon(
+                          Icons.edit,
+                          color: AppTheme.primaryGreen,
+                        ),
+                        label: const Text('Change Signature'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.primaryGreen,
+                          side: const BorderSide(color: AppTheme.primaryGreen),
+                        ),
+                      ),
+                    ] else ...[
+                      const Icon(Icons.draw, size: 48, color: AppTheme.grey),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Upload your signature for contracts associated with this crop',
+                        style: TextStyle(color: AppTheme.grey),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: _pickSignatureImage,
+                        icon: const Icon(
+                          Icons.upload,
+                          color: AppTheme.primaryGreen,
+                        ),
+                        label: const Text('Upload Signature'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.primaryGreen,
+                          side: const BorderSide(color: AppTheme.primaryGreen),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // Submit Button
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _isUploading ? null : _uploadCrop,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isAssayVerified ? AppTheme.primaryGreen : Colors.grey.shade700,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: _isUploading
+                      ? const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            ),
+                            SizedBox(width: 12),
+                            Text('Creating NFT & Processing...'),
+                          ],
+                        )
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(isAssayVerified ? Icons.verified : Icons.lock_outline, size: 18),
+                            const SizedBox(width: 8),
+                            Text(
+                              isAssayVerified ? 'List Crop for Sale (Verified)' : 'Complete AI Assaying to List',
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // NFT Info
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryGreen.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppTheme.primaryGreen.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.security, color: AppTheme.primaryGreen),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Your crop will be automatically converted to an NFT for blockchain verification and ownership proof.',
+                        style: TextStyle(
+                          color: AppTheme.darkGreen,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAssayMetricCol(String title, String val, String sub) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: GoogleFonts.inter(fontSize: 9, color: Colors.white60)),
+          const SizedBox(height: 2),
+          Text(val, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+          Text(sub, style: GoogleFonts.inter(fontSize: 8, color: const Color(0xFF69F0AE))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSellTypeCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+  }) {
+    return Container(
+      height: 120,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryGreen.withValues(alpha: 0.1),
+        border: Border.all(color: AppTheme.primaryGreen, width: 2),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 28, color: AppTheme.primaryGreen),
+          const SizedBox(height: 6),
+          Flexible(
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.primaryGreen,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Flexible(
+            child: Text(
+              subtitle,
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppTheme.primaryGreen,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
