@@ -326,12 +326,33 @@ async function getLinkedFarmer(phone) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Multimodal AI Processing (Voice Notes, Images & Text)
+// 7. Multimodal AI Processing (Voice Notes, Images & Text with Multi-Model Fallback)
 // ---------------------------------------------------------------------------
+const CANDIDATE_MODELS = [
+  'gemini-2.5-flash-lite',
+  'gemini-flash-lite-latest',
+  'gemini-3.5-flash-lite',
+  'gemini-2.5-flash'
+];
 
-// A. Rural Audio Voice Note Processing (Gemini 2.5 Flash Audio)
+async function callGemini(contents) {
+  for (const modelName of CANDIDATE_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(contents);
+      const text = result.response.text();
+      if (text && text.trim().length > 0) {
+        return text;
+      }
+    } catch (err) {
+      console.warn(`⚠️ Model ${modelName} unavailable (${err.message.slice(0, 100)}). Trying fallback...`);
+    }
+  }
+  throw new Error('All Gemini candidate models were temporarily unavailable.');
+}
+
+// A. Rural Audio Voice Note Processing (Gemini Flash Audio)
 async function processVoiceWithGemini(base64Audio, mimeType, farmer) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `You are AgriChain Kisan AI, the smart assistant for Indian farmers.
 Listen to this rural voice note (in Hindi, Haryanvi, Punjabi, Marathi, Bhojpuri, or Hinglish).
 Farmer Profile: ${farmer ? `${farmer.name} from ${farmer.location}` : 'Unlinked Farmer'}.
@@ -355,7 +376,7 @@ UNIT CONVERSIONS & PRICING:
 - If the price is given per kg (e.g. "30/kg", "38/kg", "40/kg"), multiply by 100 to get expectedPricePerQuintal (4000). expectedPricePerQuintal MUST ALWAYS be in ₹/quintal.`;
 
   try {
-    const result = await model.generateContent([
+    const rawText = await callGemini([
       {
         inlineData: {
           mimeType: mimeType ? mimeType.split(';')[0] : 'audio/ogg',
@@ -364,7 +385,7 @@ UNIT CONVERSIONS & PRICING:
       },
       prompt
     ]);
-    const cleanJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+    const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err) {
     console.error('Voice AI Parse error:', err.message);
@@ -372,9 +393,8 @@ UNIT CONVERSIONS & PRICING:
   }
 }
 
-// B. Computer Vision Crop Quality Assay & Disease Detection (Gemini 2.5 Flash Vision)
+// B. Computer Vision Crop Quality Assay & Disease Detection (Gemini Flash Vision)
 async function processImageWithGemini(base64Image, mimeType, caption, farmer) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `You are AgriChain AI, an expert agricultural quality inspector & plant pathologist.
 Analyze this photo sent by an Indian farmer. Optional caption: "${caption || 'None'}".
 Farmer: ${farmer ? `${farmer.name} from ${farmer.location}` : 'Farmer'}.
@@ -403,7 +423,7 @@ Return ONLY pure JSON (no markdown fences):
 }`;
 
   try {
-    const result = await model.generateContent([
+    const rawText = await callGemini([
       {
         inlineData: {
           mimeType: mimeType ? mimeType.split(';')[0] : 'image/jpeg',
@@ -412,7 +432,7 @@ Return ONLY pure JSON (no markdown fences):
       },
       prompt
     ]);
-    const cleanJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+    const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err) {
     console.error('Image Vision AI Parse error:', err.message);
@@ -422,7 +442,6 @@ Return ONLY pure JSON (no markdown fences):
 
 // C. Text & Multi-turn Message Processing
 async function processFarmerTextMessage(from, text, farmer) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `You are AgriChain Kisan AI, the smart assistant for Indian farmers.
 Parse this Hindi/English message from an Indian farmer: "${text}".
 Farmer Profile: ${farmer ? `${farmer.name} from ${farmer.location}` : 'Unlinked Farmer'}.
@@ -444,8 +463,8 @@ UNIT CONVERSIONS & PRICING:
 - If the price is given per kg (e.g. "30/kg", "38/kg", "38 per kg"), multiply by 100 to get expectedPricePerQuintal (3800). expectedPricePerQuintal MUST ALWAYS be in ₹/quintal.`;
 
   try {
-    const result = await model.generateContent(prompt);
-    const cleanJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+    const rawText = await callGemini([prompt]);
+    const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
     const aiResult = JSON.parse(cleanJson);
     await handleParsedAiResult(from, aiResult, farmer);
   } catch (err) {
