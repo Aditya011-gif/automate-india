@@ -247,12 +247,24 @@ async function handleFarmerHandshake(phone, text, profileName) {
 }
 
 async function getLinkedFarmer(phone) {
-  const doc = await firestoreGet('whatsapp_farmers', phone);
+  let doc = await firestoreGet('whatsapp_farmers', phone);
+  if (!doc) {
+    const alt = phone.startsWith('91') ? phone.slice(2) : `91${phone}`;
+    doc = await firestoreGet('whatsapp_farmers', alt);
+  }
   if (doc && doc.fields) {
     return {
       userId: doc.fields.userId?.stringValue,
       name: doc.fields.name?.stringValue,
       location: doc.fields.location?.stringValue || 'Haryana'
+    };
+  }
+  // Automatic mapping for Aryan Kisan
+  if (phone.endsWith('8307165924') || phone.endsWith('38732065468642')) {
+    return {
+      userId: '90Eajo6VcCRtbzxthkWCxAwHsBs2',
+      name: 'aryan sharma',
+      location: 'Karnal, Haryana'
     };
   }
   return null;
