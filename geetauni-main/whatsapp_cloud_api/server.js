@@ -510,11 +510,12 @@ async function getFarmerActiveListings(farmerId) {
       .filter(item => item.document && item.document.fields)
       .map(item => {
         const f = item.document.fields;
+        const rawPrice = f.price?.doubleValue || f.price?.integerValue || f.price?.stringValue || 0;
         return {
           id: f.id?.stringValue || item.document.name.split('/').pop(),
           name: f.name?.stringValue || 'फसल',
           quantity: f.quantity?.stringValue || '',
-          price: f.price?.doubleValue || f.price?.integerValue || 0,
+          price: Number(rawPrice) || 0,
           status: f.status?.stringValue || 'active',
           grade: f.qualityGrade?.stringValue || 'grade1'
         };
@@ -541,7 +542,8 @@ async function handleStatusInquiry(from, farmer) {
   if (activeListings.length > 0) {
     msg += `📦 *आपकी सक्रिय फसलें (Active Market Listings):*\n`;
     activeListings.forEach((item, idx) => {
-      const priceStr = item.price > 300 ? `₹${item.price}/क्विंटल` : `₹${item.price}/kg`;
+      const numPrice = Number(item.price) || 0;
+      const priceStr = numPrice > 300 ? `₹${numPrice}/क्विंटल` : `₹${numPrice}/kg`;
       msg += `${idx + 1}. 🌾 *${item.name}*\n   ⚖️ मात्रा: ${item.quantity || 'दर्ज है'}\n   💰 भाव: ${priceStr}\n   ⭐ स्थिति: *${item.status.toUpperCase()}*\n\n`;
     });
     msg += `🔒 *एस्क्रो सुरक्षा:* खरीदार द्वारा बोली लगाने या ऑर्डर लॉक होने पर आपको WhatsApp पर तुरंत सूचना मिलेगी।\n\n`;
