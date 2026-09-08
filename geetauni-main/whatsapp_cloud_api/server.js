@@ -652,7 +652,7 @@ async function saveAndConfirmCropListing(from, farmer, details) {
 }
 
 // ---------------------------------------------------------------------------
-// 9. Health Check Endpoint
+// 9. Health Check Endpoint & Keep-Alive
 // ---------------------------------------------------------------------------
 app.get('/diag', (req, res) => {
   res.json({
@@ -672,10 +672,27 @@ app.get('/', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`\n=============================================================`);
-  console.log(`🚀 AgriChain Multimodal WhatsApp Cloud API is LIVE on port ${PORT}!`);
-  console.log(`🎙️ Voice Notes (Hindi/Regional NLP) | 📸 Image Quality Assay | 💬 Text`);
-  console.log(`📡 Webhook Endpoint: http://localhost:${PORT}/webhook`);
-  console.log(`=============================================================\n`);
-});
+// Keep-alive self-ping to prevent Render free-tier from idling/sleeping (pings every 9 mins)
+const PING_URL = process.env.RENDER_EXTERNAL_URL || 'https://agrichain-whatsapp-api.onrender.com';
+if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+  setInterval(() => {
+    https.get(`${PING_URL}/diag`, (res) => {
+      console.log(`[Keep-Alive] Pinged ${PING_URL}/diag -> Status: ${res.statusCode}`);
+    }).on('error', (e) => {
+      console.warn(`[Keep-Alive] Ping warn: ${e.message}`);
+    });
+  }, 9 * 60 * 1000);
+}
+
+if (require.main === module || !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n=============================================================`);
+    console.log(`🚀 AgriChain Multimodal WhatsApp Cloud API is LIVE on port ${PORT}!`);
+    console.log(`🎙️ Voice Notes (Hindi/Regional NLP) | 📸 Image Quality Assay | 💬 Text`);
+    console.log(`📡 Webhook Endpoint: http://localhost:${PORT}/webhook`);
+    console.log(`=============================================================\n`);
+  });
+}
+
+module.exports = app;
+
