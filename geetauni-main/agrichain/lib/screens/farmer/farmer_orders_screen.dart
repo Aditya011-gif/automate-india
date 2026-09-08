@@ -16,27 +16,13 @@ class FarmerOrdersScreen extends StatefulWidget {
   State<FarmerOrdersScreen> createState() => _FarmerOrdersScreenState();
 }
 
-class _FarmerOrdersScreenState extends State<FarmerOrdersScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _FarmerOrdersScreenState extends State<FarmerOrdersScreen> {
   final DatabaseService _dbService = DatabaseService();
 
   double _toDouble(dynamic val) {
     if (val == null) return 0.0;
     if (val is num) return val.toDouble();
     return double.tryParse(val.toString()) ?? 0.0;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
   }
 
   @override
@@ -51,53 +37,15 @@ class _FarmerOrdersScreenState extends State<FarmerOrdersScreen>
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           const CustomAppBar(
             title: 'My Orders',
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: AppTheme.softShadow,
-                ),
-                child: TabBar(
-                  controller: _tabController,
-                  labelColor: AppTheme.primaryColor,
-                  unselectedLabelColor: AppTheme.textSecondary,
-                  indicatorColor: AppTheme.primaryColor,
-                  indicatorWeight: 3,
-                  labelStyle: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                  tabs: const [
-                    Tab(
-                      icon: Icon(Icons.shopping_bag_outlined, size: 18),
-                      text: 'Retail Orders',
-                    ),
-                    Tab(
-                      icon: Icon(Icons.business_outlined, size: 18),
-                      text: 'FPO Procurement',
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            subtitle: 'Buyer Orders & Escrow Settlements',
           ),
         ],
-        body: TabBarView(
-          controller: _tabController,
-          children: [
-            _buildRetailOrdersTab(farmerId),
-            _buildFpoProcurementOrdersTab(farmerId),
-          ],
-        ),
+        body: _buildRetailOrdersTab(farmerId),
       ),
     );
   }
 
-  // TAB 1: Farmer -> Retail Buyer Orders
+  // Farmer -> Retail Buyer Orders
   Widget _buildRetailOrdersTab(String farmerId) {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _dbService.streamFarmerRetailOrders(farmerId),
