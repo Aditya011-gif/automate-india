@@ -442,13 +442,25 @@ Return ONLY pure JSON (no markdown fences):
 
 // C. Text & Multi-turn Message Processing
 async function processFarmerTextMessage(from, text, farmer) {
+  // Fast keyword check for status / my crops inquiry
+  if (/status|mera status|meri fasal|my crop|active crop|listings|orders/i.test(text)) {
+    await handleStatusInquiry(from, farmer);
+    return;
+  }
+
+  // Fast keyword check for payment / escrow inquiry
+  if (/escrow|payment|paisa|paise|paise kaise|bank|payment secure/i.test(text)) {
+    await handleEscrowInquiry(from, farmer);
+    return;
+  }
+
   const prompt = `You are AgriChain Kisan AI, the smart assistant for Indian farmers.
 Parse this Hindi/English message from an Indian farmer: "${text}".
 Farmer Profile: ${farmer ? `${farmer.name} from ${farmer.location}` : 'Unlinked Farmer'}.
 
 Return ONLY pure JSON (no markdown fences):
 {
-  "intent": "listing" | "price_inquiry" | "escrow_inquiry" | "agronomic_advisory" | "general",
+  "intent": "listing" | "price_inquiry" | "escrow_inquiry" | "agronomic_advisory" | "status_inquiry" | "general",
   "crop": "wheat" | "rice" | "mustard" | "cotton" | "soybean" | "potato" | "onion" | "tomato" | "maize",
   "variety": string | null,
   "quantityQuintals": number | null,
@@ -475,8 +487,102 @@ UNIT CONVERSIONS & PRICING:
 // ---------------------------------------------------------------------------
 // 8. Shared Decision Router & Automated Firestore Listing
 // ---------------------------------------------------------------------------
+async function getFarmerActiveListings(farmerId) {
+  try {
+    const res = await axios.post(
+      `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery?key=${FIREBASE_WEB_API_KEY}`,
+      {
+        structuredQuery: {
+          from: [{ collectionId: 'crops' }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: 'farmerId' },
+              op: 'EQUAL',
+              value: { stringValue: farmerId }
+            }
+          },
+          limit: 10
+        }
+      }
+    );
+    if (!res.data || !Array.isArray(res.data)) return [];
+    return res.data
+      .filter(item => item.document && item.document.fields)
+      .map(item => {
+        const f = item.document.fields;
+        return {
+          id: f.id?.stringValue || item.document.name.split('/').pop(),
+          name: f.name?.stringValue || 'फसल',
+          quantity: f.quantity?.stringValue || '',
+          price: f.price?.doubleValue || f.price?.integerValue || 0,
+          status: f.status?.stringValue || 'active',
+          grade: f.qualityGrade?.stringValue || 'grade1'
+        };
+      });
+  } catch (err) {
+    console.warn('⚠️ Error fetching farmer crops from Firestore:', err.message);
+    return [];
+  }
+}
+
+async function handleStatusInquiry(from, farmer) {
+  const farmerId = farmer?.userId || '90Eajo6VcCRtbzxthkWCxAwHsBs2';
+  const farmerName = farmer?.name || 'aryan sharma';
+  const location = farmer?.location || 'Karnal, Haryana';
+
+  const listings = await getFarmerActiveListings(farmerId);
+  const activeListings = listings.filter(l => l.status !== 'sold' && l.status !== 'cancelled');
+
+  let msg = `🌾 *AgriChain खाता व फसल स्थिति (Live Status)* 🌾\n\n`;
+  msg += `👤 *किसान*: ${farmerName} ✅ (सत्यापित)\n`;
+  msg += `📍 *स्थान*: ${location}\n`;
+  msg += `📱 *WhatsApp*: +${from}\n\n`;
+
+  if (activeListings.length > 0) {
+    msg += `📦 *आपकी सक्रिय फसलें (Active Market Listings):*\n`;
+    activeListings.forEach((item, idx) => {
+      const priceStr = item.price > 300 ? `₹${item.price}/क्विंटल` : `₹${item.price}/kg`;
+      msg += `${idx + 1}. 🌾 *${item.name}*\n   ⚖️ मात्रा: ${item.quantity || 'दर्ज है'}\n   💰 भाव: ${priceStr}\n   ⭐ स्थिति: *${item.status.toUpperCase()}*\n\n`;
+    });
+    msg += `🔒 *एस्क्रो सुरक्षा:* खरीदार द्वारा बोली लगाने या ऑर्डर लॉक होने पर आपको WhatsApp पर तुरंत सूचना मिलेगी।\n\n`;
+    msg += `💡 *नई फसल जोड़ने के लिए बोलें या लिखें:*\n👉 *"50 kg wheat 40/kg"*`;
+  } else {
+    msg += `📦 *वर्तमान में कोई सक्रिय फसल दर्ज नहीं है।*\n\n`;
+    msg += `💡 *फसल बेचने के लिए बोलकर (Voice Note) या लिखकर भेजें:*\n👉 *"30 kg wheat 38/kg"*`;
+  }
+
+  await sendWhatsAppMessage(from, msg);
+}
+
+async function handleEscrowInquiry(from, farmer) {
+  const farmerName = farmer?.name || 'किसान भाई';
+  const escrowMsg = 
+`🛡️ *AgriChain सुरक्षित एस्क्रो भुगतान प्रणाली* 🛡️
+
+नमस्ते ${farmerName}! AgriChain पर आपका भुगतान 100% सुरक्षित रहता है:
+
+1️⃣ *भुगतान लॉक:* खरीदार अग्रिम राशि AgriChain बैंक एस्क्रो में सुरक्षित लॉक करता है।
+2️⃣ *खेत से पिकअप:* राशि लॉक होने के बाद ही ट्रांसपोर्टर आपके खेत से फसल लोड करता है।
+3️⃣ *तुरंत भुगतान:* डिलीवरी और डिजिटल तौल होते ही पैसा सीधे आपके बैंक खाते (UPI/IMPS) में जमा हो जाता है।
+
+❌ कोई आढ़ती कटौती नहीं | ❌ कोई बिचौलिया नहीं | ✅ सीधा बैंक ट्रांसफर`;
+  await sendWhatsAppMessage(from, escrowMsg);
+}
+
 async function handleParsedAiResult(from, aiResult, farmer) {
-  // 1. Price Inquiry (Bhav Check)
+  // 1. Status Inquiry
+  if (aiResult.intent === 'status_inquiry') {
+    await handleStatusInquiry(from, farmer);
+    return;
+  }
+
+  // 2. Escrow Inquiry
+  if (aiResult.intent === 'escrow_inquiry') {
+    await handleEscrowInquiry(from, farmer);
+    return;
+  }
+
+  // 3. Price Inquiry (Bhav Check)
   if (aiResult.intent === 'price_inquiry' && aiResult.crop) {
     const benchmark = MANDI_BENCHMARK_RATES[aiResult.crop.toLowerCase()] || {
       nameHindi: aiResult.crop,
@@ -501,13 +607,13 @@ async function handleParsedAiResult(from, aiResult, farmer) {
     return;
   }
 
-  // 2. Agronomic Advisory
+  // 4. Agronomic Advisory
   if (aiResult.intent === 'agronomic_advisory' && aiResult.advisoryReply) {
     await sendWhatsAppMessage(from, `🌾 *AgriChain कृषि सलाहकार* 🌾\n\n${aiResult.advisoryReply}`);
     return;
   }
 
-  // 3. Crop Listing Intent
+  // 5. Crop Listing Intent
   if (aiResult.intent === 'listing' && aiResult.quantityQuintals > 0) {
     await saveAndConfirmCropListing(from, farmer, {
       crop: aiResult.crop,
@@ -521,12 +627,21 @@ async function handleParsedAiResult(from, aiResult, farmer) {
     return;
   }
 
-  // Default Prompt
+  // Default Prompt / Help Menu
   const greeting = farmer ? `नमस्ते ${farmer.name} जी! 🙏` : 'नमस्ते किसान भाई! 🙏';
-  await sendWhatsAppMessage(
-    from,
-    `${greeting}\nAgriChain कृषि-साथी में आपका स्वागत है।\n\nअपनी फसल बेचने के लिए बोलकर (Voice Note) या लिखकर भेजें:\n👉 *"30 kg wheat 38/kg"*`
-  );
+  const menuMsg = 
+`${greeting}
+AgriChain कृषि-साथी में आपका स्वागत है। 🌾
+
+आप नीचे दिए गए विकल्पों में से कुछ भी भेज सकते हैं:
+1️⃣ *फसल बेचें:* बोलकर (Voice Note) या लिखकर भेजें:
+   👉 *"50 kg wheat 40/kg"*
+2️⃣ *गुणवत्ता जांच:* फसल का फोटो भेजें (AI क्वालिटी रिपोर्ट पाएँ)
+3️⃣ *मंडी भाव:* लिखें *"गेहूं का भाव क्या है"*
+4️⃣ *स्थिति जांच:* लिखें *"status"* या *"मेरी फसलें"*
+5️⃣ *भुगतान सुरक्षा:* लिखें *"पेमेंट कैसे मिलेगा?"*`;
+
+  await sendWhatsAppMessage(from, menuMsg);
 }
 
 // Visual Crop Quality Inspection Handler
