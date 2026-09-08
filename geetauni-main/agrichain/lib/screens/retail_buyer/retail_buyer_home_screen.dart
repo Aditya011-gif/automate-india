@@ -170,17 +170,7 @@ class _RetailBuyerHomeScreenState extends State<RetailBuyerHomeScreen> {
                   _buildNearbyCropsList(filteredCrops),
                   const SizedBox(height: 24),
 
-                  // 6. Popular Crops
-                  _buildSectionHeader(
-                    title: 'Popular Crop Markets 🔥',
-                    subtitle: 'Active trading volumes and mandi verified lots',
-                    onSeeAll: () => widget.onNavigateTab?.call(1),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildPopularCropsGrid(allFarmerCrops),
-                  const SizedBox(height: 24),
-
-                  // 7. Trust Banner
+                  // 6. Trust Banner
                   _buildDirectFarmerTrustCard(),
                   const SizedBox(height: 40),
                 ],
@@ -731,92 +721,6 @@ class _RetailBuyerHomeScreenState extends State<RetailBuyerHomeScreen> {
           ),
         );
       }).toList(),
-    );
-  }
-
-  Widget _buildPopularCropsGrid(List<Map<String, dynamic>> allCrops) {
-    // Generate counts from actual crops
-    int wheatCount = allCrops.where((c) => (c['name'] ?? '').toString().toLowerCase().contains('wheat')).length;
-    int riceCount = allCrops.where((c) => (c['name'] ?? '').toString().toLowerCase().contains('rice') || (c['name'] ?? '').toString().toLowerCase().contains('paddy')).length;
-    int mustardCount = allCrops.where((c) => (c['name'] ?? '').toString().toLowerCase().contains('mustard')).length;
-    int maizeCount = allCrops.where((c) => (c['name'] ?? '').toString().toLowerCase().contains('maize') || (c['name'] ?? '').toString().toLowerCase().contains('corn')).length;
-
-    final popular = [
-      {'name': 'Sharbati Wheat', 'price': '₹35 / kg', 'icon': '🌾', 'farmers': '${wheatCount > 0 ? wheatCount : 12} Farmer Lots'},
-      {'name': 'Basmati Rice', 'price': '₹46 / kg', 'icon': '🍚', 'farmers': '${riceCount > 0 ? riceCount : 8} Farmer Lots'},
-      {'name': 'Black Mustard', 'price': '₹58 / kg', 'icon': '🌻', 'farmers': '${mustardCount > 0 ? mustardCount : 6} Farmer Lots'},
-      {'name': 'Yellow Maize', 'price': '₹22 / kg', 'icon': '🌽', 'farmers': '${maizeCount > 0 ? maizeCount : 10} Farmer Lots'},
-    ];
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.18,
-      ),
-      itemCount: popular.length,
-      itemBuilder: (context, index) {
-        final item = popular[index];
-        return InkWell(
-          onTap: () => widget.onNavigateTab?.call(1),
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(item['icon']!, style: const TextStyle(fontSize: 24)),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        item['farmers']!,
-                        style: GoogleFonts.inter(fontSize: 10, color: Colors.grey.shade700),
-                      ),
-                    ),
-                  ],
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item['name']!,
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.darkGreen,
-                      ),
-                    ),
-                    Text(
-                      item['price']!,
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.primaryGreen,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 
