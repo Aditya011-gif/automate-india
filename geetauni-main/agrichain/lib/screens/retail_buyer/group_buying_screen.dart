@@ -2,19 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
-import '../../data/initialize_mock_data.dart';
 import '../../models/farmer_cluster_model.dart';
 import '../../services/farmer_clustering_service.dart';
+import '../../services/road_routing_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/crop_image_helper.dart';
 import 'retail_checkout_screen.dart';
 
-/// Screen: Farmer Grouping & Hyperlocal Produce Pooling
-/// Connects to the real Firebase Firestore dataset with dynamic spatial clustering (< 5-8 km).
-/// Provides clear toggling between Live Firebase Farmers and Demo Showcase Mock clusters.
-/// Features Google Maps & OpenStreetMap APIs, custom quantity selection, and detailed farm metrics.
+/// Screen: Farmer Grouping & Hyperlocal Produce Pooling (<= 7 km)
+/// - Spatial clustering model auto-finding distinct farmers strictly within <= 7 km.
+/// - Analyzes crop compatibility, quality grading, tested moisture, and residue-free GAP.
+/// - Performs nearest-neighbor pickup route optimization (TSP).
+/// - Dynamic custom quantity selector fulfilling retail buyer demand.
+/// - Inspect & Map bottom sheet displaying real asphalt road geometry from OSRM Driving API.
 class FarmerGroupingScreen extends StatefulWidget {
-  const FarmerGroupingScreen({super.key});
+  final Function(int)? onNavigateTab;
+
+  const FarmerGroupingScreen({super.key, this.onNavigateTab});
 
   @override
   State<FarmerGroupingScreen> createState() => _FarmerGroupingScreenState();
@@ -23,15 +27,11 @@ class FarmerGroupingScreen extends StatefulWidget {
 /// Backward compatibility alias
 typedef GroupBuyingScreen = FarmerGroupingScreen;
 
-enum DatasetSourceFilter { all, liveFirebase, demoShowcase }
-
 class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
   final FarmerClusteringService _clusteringService = FarmerClusteringService();
 
-  DatasetSourceFilter _sourceFilter = DatasetSourceFilter.all;
   String _selectedTagFilter = 'All Clusters';
   final Map<String, double> _selectedQuantities = {};
-  bool _isSeedingData = false;
 
   double _getQuantity(String clusterId, double fallback) {
     return _selectedQuantities[clusterId] ?? fallback;
@@ -44,56 +44,22 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
   }
 
   List<FarmerCluster> _filterClusters(List<FarmerCluster> clusters) {
-    // 1. Source Filter (Live Firebase vs Demo Showcase vs All)
-    var list = clusters;
-    if (_sourceFilter == DatasetSourceFilter.liveFirebase) {
-      list = list.where((c) => c.isRealData).toList();
-    } else if (_sourceFilter == DatasetSourceFilter.demoShowcase) {
-      list = list.where((c) => !c.isRealData).toList();
-    }
-
-    // 2. Agricultural Tag Filter
-    if (_selectedTagFilter == 'Under 5 km Radius') {
-      return list.where((c) => c.maxInterFarmDistance <= 5.0).toList();
-    } else if (_selectedTagFilter == 'Residue-Free') {
-      return list.where((c) {
+    if (_selectedTagFilter == '≤ 5 km Radius') {
+      return clusters.where((c) => c.maxInterFarmDistance <= 5.0).toList();
+    } else if (_selectedTagFilter == '≤ 7 km Radius') {
+      return clusters.where((c) => c.maxInterFarmDistance <= 7.0).toList();
+    } else if (_selectedTagFilter == 'Residue-Free GAP') {
+      return clusters.where((c) {
         final cond = c.conditions['cultivationMethod']?.toString() ?? '';
-        return cond.toLowerCase().contains('residue') || cond.toLowerCase().contains('bio');
+        return cond.toLowerCase().contains('residue') || cond.toLowerCase().contains('gap') || cond.toLowerCase().contains('bio');
       }).toList();
     } else if (_selectedTagFilter == 'Moisture Certified') {
-      return list.where((c) {
+      return clusters.where((c) {
         final moist = c.conditions['moistureLevel']?.toString() ?? '';
         return moist.contains('%');
       }).toList();
     }
-    return list;
-  }
-
-  Future<void> _seedFirebaseCrops() async {
-    setState(() => _isSeedingData = true);
-    try {
-      final success = await MockDataInitializer.initializeMockCrops();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              success
-                  ? '🌱 Successfully seeded real crop listings into Firebase Firestore!'
-                  : '⚠️ Firebase seeding encountered an issue.',
-            ),
-            backgroundColor: success ? const Color(0xFF15803D) : Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error seeding: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSeedingData = false);
-    }
+    return clusters;
   }
 
   @override
@@ -122,7 +88,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
               ],
             ),
             Text(
-              'Hyperlocal Distance Clusters • Real Database & Showcase • Custom Qty',
+              '≤ 7 km Proximity Clusters • TSP Route Optimized • Wholesale Rates',
               style: GoogleFonts.inter(
                 fontSize: 10.5,
                 color: Colors.grey.shade600,
@@ -131,6 +97,14 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
             ),
           ],
         ),
+        actions: [
+          if (widget.onNavigateTab != null)
+            IconButton(
+              icon: const Icon(Icons.storefront_outlined, color: AppTheme.darkGreen),
+              tooltip: 'Browse Single Listings',
+              onPressed: () => widget.onNavigateTab!(1),
+            ),
+        ],
       ),
       body: StreamBuilder<List<FarmerCluster>>(
         stream: _clusteringService.streamFarmerClusters(),
@@ -140,35 +114,25 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
           }
 
           final allClusters = snapshot.data ?? [];
-          final liveCount = allClusters.where((c) => c.isRealData).length;
-          final mockCount = allClusters.where((c) => !c.isRealData).length;
           final filteredClusters = _filterClusters(allClusters);
 
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              // 1. Sleek Hero Banner
+              // 1. Hero Banner
               _buildCleanHeroBanner(allClusters.length),
               const SizedBox(height: 14),
 
-              // 2. Segmented Dataset Source Switcher (Live Firebase vs Demo Showcase)
-              _buildDatasetSourceSwitcher(liveCount, mockCount, allClusters.length),
-              const SizedBox(height: 12),
-
-              // 3. Filter Chips
+              // 2. Filter Chips
               _buildFilterChips(),
               const SizedBox(height: 16),
 
-              // 4. Section Title with Cluster Count
+              // 3. Section Title with Cluster Count
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    _sourceFilter == DatasetSourceFilter.liveFirebase
-                        ? '🟢 Live Firebase Clusters'
-                        : (_sourceFilter == DatasetSourceFilter.demoShowcase
-                            ? '✨ Showcase Demo Clusters'
-                            : 'Active Hyperlocal Clusters'),
+                    'Active ≤ 7km Hyperlocal Clusters',
                     style: GoogleFonts.outfit(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -182,7 +146,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      '${filteredClusters.length} Verified',
+                      '${filteredClusters.length} Clusters Ready',
                       style: const TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.bold,
@@ -194,7 +158,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
               ),
               const SizedBox(height: 12),
 
-              // 5. Cluster Cards or Empty State
+              // 4. Cluster Cards or Empty State
               if (filteredClusters.isEmpty)
                 _buildEmptySourceState()
               else
@@ -202,70 +166,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
             ],
           );
         },
-      ),
-    );
-  }
-
-  // Segmented Source Switcher: Live Firebase vs Demo Showcase vs All
-  Widget _buildDatasetSourceSwitcher(int liveCount, int mockCount, int totalCount) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade300),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          _buildSourceTab(
-            label: '🟢 Live Firebase ($liveCount)',
-            filter: DatasetSourceFilter.liveFirebase,
-          ),
-          _buildSourceTab(
-            label: '✨ Demo Showcase ($mockCount)',
-            filter: DatasetSourceFilter.demoShowcase,
-          ),
-          _buildSourceTab(
-            label: '🌾 All ($totalCount)',
-            filter: DatasetSourceFilter.all,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSourceTab({required String label, required DatasetSourceFilter filter}) {
-    final isSelected = _sourceFilter == filter;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          setState(() => _sourceFilter = filter);
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF15803D) : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.inter(
-              fontSize: 11,
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-              color: isSelected ? Colors.white : Colors.grey.shade700,
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -307,7 +207,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Hyperlocal Proximity Pooling',
+                      'Hyperlocal Proximity Pooling (≤ 7 km)',
                       style: GoogleFonts.outfit(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -315,7 +215,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                       ),
                     ),
                     Text(
-                      'Neighboring farms (< 5-8 km) pooled for single-dispatch wholesale rates',
+                      'Neighboring farms auto-clustered for single-dispatch wholesale savings',
                       style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFFB9F6CA)),
                     ),
                   ],
@@ -325,14 +225,14 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
           ),
           const SizedBox(height: 14),
 
-          // 3 Clean Summary Badges
+          // 3 Summary Badges
           Row(
             children: [
-              _buildBannerStat(Icons.scatter_plot, '$totalClusters Clusters', 'Active Belt'),
+              _buildBannerStat(Icons.scatter_plot, '$totalClusters Clusters', 'Agricultural Belt'),
               const SizedBox(width: 8),
-              _buildBannerStat(Icons.route, '≤ 5 km Radius', 'Inter-Farm Span'),
+              _buildBannerStat(Icons.route, '≤ 7 km Radius', 'Inter-Farm Span'),
               const SizedBox(width: 8),
-              _buildBannerStat(Icons.trending_down, 'Up to 35% OFF', 'Wholesale Rate'),
+              _buildBannerStat(Icons.trending_down, '15% OFF Pooled', 'Wholesale Rate'),
             ],
           ),
         ],
@@ -379,7 +279,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
   }
 
   Widget _buildFilterChips() {
-    final filters = ['All Clusters', 'Under 5 km Radius', 'Residue-Free', 'Moisture Certified'];
+    final filters = ['All Clusters', '≤ 5 km Radius', '≤ 7 km Radius', 'Residue-Free GAP', 'Moisture Certified'];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -424,53 +324,34 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
       ),
       child: Column(
         children: [
-          const Icon(Icons.cloud_sync, size: 48, color: Color(0xFF15803D)),
+          const Icon(Icons.hub_outlined, size: 48, color: Color(0xFF15803D)),
           const SizedBox(height: 12),
           Text(
-            _sourceFilter == DatasetSourceFilter.liveFirebase
-                ? 'No Live Crops in Firebase Firestore Yet'
-                : 'No Matching Clusters Found',
+            'No Matching Clusters Found',
             style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 6),
           Text(
-            _sourceFilter == DatasetSourceFilter.liveFirebase
-                ? 'Publish a harvest from the Farmer screen, or tap below to seed sample crops directly to Firebase Firestore for real clustering!'
-                : 'Try selecting "All Clusters" or switching to "✨ Demo Showcase".',
+            'Try selecting "All Clusters" or check back as more local farmers publish their harvests.',
             style: GoogleFonts.inter(fontSize: 12, color: Colors.grey.shade600),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
-          if (_sourceFilter == DatasetSourceFilter.liveFirebase)
-            ElevatedButton.icon(
-              onPressed: _isSeedingData ? null : _seedFirebaseCrops,
-              icon: _isSeedingData
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.add_to_photos, size: 16),
-              label: Text(_isSeedingData ? 'Seeding Firestore...' : '🌱 Seed Sample Crops to Firebase'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF15803D),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            )
-          else
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _sourceFilter = DatasetSourceFilter.all;
-                  _selectedTagFilter = 'All Clusters';
-                });
-              },
-              child: const Text('Reset All Filters'),
-            ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _selectedTagFilter = 'All Clusters';
+              });
+            },
+            child: const Text('Reset Filter to All Clusters'),
+          ),
         ],
       ),
     );
   }
 
-  /// Detailed & un-clustered cluster card with live custom quantity picker
+  /// High-Fidelity Cluster Card with dynamic custom quantity picker fulfilling buyer demand
   Widget _buildDetailedClusterCard(FarmerCluster cluster) {
     final savingsPercent = ((cluster.retailMarketPrice - cluster.wholesalePrice) / cluster.retailMarketPrice * 100).round();
     final savingsPerKg = cluster.retailMarketPrice - cluster.wholesalePrice;
@@ -484,8 +365,8 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: cluster.isRealData ? const Color(0xFF86EFAC) : Colors.grey.shade200,
-          width: cluster.isRealData ? 1.5 : 1.0,
+          color: const Color(0xFF86EFAC),
+          width: 1.2,
         ),
         boxShadow: [
           BoxShadow(
@@ -560,29 +441,25 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                 ),
               ),
 
-              // Source Badge: Live Firebase vs Demo Showcase
+              // Verified Cluster Badge
               Positioned(
                 bottom: 10,
                 left: 10,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: cluster.isRealData ? const Color(0xFF15803D) : const Color(0xFF475569),
+                    color: const Color(0xFF15803D),
                     borderRadius: BorderRadius.circular(6),
                     boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
                   ),
-                  child: Row(
+                  child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        cluster.isRealData ? Icons.cloud_done : Icons.auto_awesome,
-                        size: 12,
-                        color: Colors.white,
-                      ),
-                      const SizedBox(width: 4),
+                      Icon(Icons.verified, size: 12, color: Colors.white),
+                      SizedBox(width: 4),
                       Text(
-                        cluster.isRealData ? 'Live Firebase Farmer Listing' : 'Showcase Demo Cluster',
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        'Verified ≤ 7km Spatial Cluster',
+                        style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
@@ -700,7 +577,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                // Mini Distance Chain Preview
+                // Inter-Farm Distance Chain Preview along pickup path
                 _buildInterFarmChainPreview(cluster),
                 const SizedBox(height: 10),
 
@@ -718,7 +595,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () => _showClusterInspectionSheet(context, cluster),
-                        icon: const Icon(Icons.map_outlined, size: 16),
+                        icon: const Icon(Icons.alt_route, size: 16),
                         label: Text(
                           'Inspect & Map',
                           style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13),
@@ -816,47 +693,49 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
 
   // Quality & Verification Tags Bar
   Widget _buildQualityTagsBar(FarmerCluster cluster) {
-    final moisture = cluster.conditions['moistureLevel']?.toString() ?? '11.8% Moisture';
+    final moisture = cluster.conditions['moistureLevel']?.toString() ?? '11.2% Moisture';
     return Wrap(
       spacing: 6,
       runSpacing: 4,
       children: [
         _buildTagPill('💧 $moisture'),
-        _buildTagPill('🌿 Residue-Free'),
-        _buildTagPill('🌾 98.4% Purity'),
+        _buildTagPill('🌿 Residue-Free GAP'),
+        _buildTagPill('🌾 Single-Belt Pure'),
         _buildTagPill('🔐 DigiLocker e-Signed'),
       ],
     );
   }
 
-  Widget _buildTagPill(String text) {
+  Widget _buildTagPill(String label) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
         color: const Color(0xFFF1F5F9),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFCBD5E1)),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Text(
-        text,
-        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFF334155)),
+        label,
+        style: const TextStyle(fontSize: 10.5, color: Color(0xFF334155), fontWeight: FontWeight.w600),
       ),
     );
   }
 
-  // Custom Quantity Selector on the card
+  // Card Quantity Selector fulfilling buyer demand
   Widget _buildCardQuantitySelector(
     FarmerCluster cluster,
     double currentQty,
     double calculatedTotal,
     double calculatedSavings,
   ) {
+    final quickOptions = [10.0, 25.0, 50.0, 100.0, 250.0];
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: const Color(0xFFFAFAFA),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -866,17 +745,18 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
             children: [
               Text(
                 'Required Quantity:',
-                style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.bold, color: const Color(0xFF334155)),
               ),
               Row(
                 children: [
-                  IconButton.filledTonal(
-                    visualDensity: VisualDensity.compact,
-                    onPressed: currentQty > 5.0 ? () => _setQuantity(cluster.id, currentQty - 5.0) : null,
-                    icon: const Icon(Icons.remove, size: 14),
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline, size: 20, color: Color(0xFF15803D)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => _setQuantity(cluster.id, currentQty - 5.0),
                   ),
-                  const SizedBox(width: 8),
                   Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -885,14 +765,14 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                     ),
                     child: Text(
                       '${currentQty.toStringAsFixed(0)} kg',
-                      style: GoogleFonts.spaceMono(fontSize: 13, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                      style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  IconButton.filledTonal(
-                    visualDensity: VisualDensity.compact,
-                    onPressed: currentQty < cluster.availableStockKg ? () => _setQuantity(cluster.id, currentQty + 5.0) : null,
-                    icon: const Icon(Icons.add, size: 14),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline, size: 20, color: Color(0xFF15803D)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => _setQuantity(cluster.id, currentQty + 5.0),
                   ),
                 ],
               ),
@@ -900,64 +780,69 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
           ),
           const SizedBox(height: 8),
 
-          // Preset Chips + Custom kg button
+          // Quick Preset Pills
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                ...[10.0, 25.0, 50.0, 100.0, 250.0].map((qty) {
-                  final isSelected = currentQty == qty;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                      label: Text('${qty.toInt()} kg'),
-                      selected: isSelected,
-                      onSelected: (selected) {
-                        if (selected) _setQuantity(cluster.id, qty);
-                      },
-                      labelStyle: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: isSelected ? Colors.white : const Color(0xFF334155),
+                ...quickOptions.map((opt) {
+                  final isSel = currentQty == opt;
+                  return GestureDetector(
+                    onTap: () => _setQuantity(cluster.id, opt),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isSel ? const Color(0xFF15803D) : Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: isSel ? const Color(0xFF15803D) : Colors.grey.shade300),
                       ),
-                      selectedColor: const Color(0xFF15803D),
-                      backgroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Text(
+                        '${opt.toStringAsFixed(0)} kg',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: isSel ? FontWeight.bold : FontWeight.w500,
+                          color: isSel ? Colors.white : Colors.grey.shade800,
+                        ),
+                      ),
                     ),
                   );
                 }),
-                // Custom Quantity Action Chip
-                ActionChip(
-                  avatar: const Icon(Icons.edit, size: 13, color: Color(0xFF15803D)),
-                  label: const Text('Custom kg'),
-                  onPressed: () {
-                    _showCustomQuantityDialog(
-                      context,
-                      cluster,
-                      currentQty,
-                      (val) => _setQuantity(cluster.id, val),
-                    );
-                  },
-                  labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
-                  backgroundColor: const Color(0xFFF0FDF4),
-                  side: const BorderSide(color: Color(0xFF86EFAC)),
+                GestureDetector(
+                  onTap: () => _showCustomQuantityDialog(cluster),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF15803D)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.edit, size: 11, color: Color(0xFF15803D)),
+                        SizedBox(width: 4),
+                        Text('Custom kg', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D))),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
 
-          // Price & Savings Callout
+          // Subtotal & Savings Bar
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 'Total: ₹${calculatedTotal.toStringAsFixed(0)}',
-                style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
+                style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
               ),
               Text(
                 'Retail: ₹${(currentQty * cluster.retailMarketPrice).toStringAsFixed(0)} (Save ₹${calculatedSavings.toStringAsFixed(0)})',
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF166534)),
+                style: GoogleFonts.inter(fontSize: 11, color: Colors.grey.shade600),
               ),
             ],
           ),
@@ -966,85 +851,38 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  // Custom Quantity Input Dialog
-  void _showCustomQuantityDialog(
-    BuildContext context,
-    FarmerCluster cluster,
-    double currentQty,
-    Function(double) onSelected,
-  ) {
-    final controller = TextEditingController(text: currentQty.toStringAsFixed(0));
+  void _showCustomQuantityDialog(FarmerCluster cluster) {
+    final controller = TextEditingController(text: _getQuantity(cluster.id, cluster.defaultOrderKg).toStringAsFixed(0));
     showDialog(
       context: context,
-      builder: (dlgCtx) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Row(
-            children: [
-              const Icon(Icons.edit_note, color: Color(0xFF15803D)),
-              const SizedBox(width: 8),
-              const Text('Enter Custom Quantity', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: Text('Enter Custom Quantity (kg)', style: GoogleFonts.outfit(fontWeight: FontWeight.bold)),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Quantity in Kilograms',
+            suffixText: 'kg',
+            border: OutlineInputBorder(),
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Specify required quantity in kilograms for ${cluster.crop}:',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: controller,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: 'Order Quantity (kg)',
-                  suffixText: 'kg',
-                  hintText: 'e.g. 35, 75, 150',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFF15803D), width: 2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Available stock: ${cluster.availableStockKg.toStringAsFixed(0)} kg (Wholesale: ₹${cluster.wholesalePrice.toStringAsFixed(0)}/kg)',
-                style: const TextStyle(fontSize: 11, color: Color(0xFF15803D), fontWeight: FontWeight.w600),
-              ),
-            ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              final val = double.tryParse(controller.text) ?? cluster.defaultOrderKg;
+              _setQuantity(cluster.id, val);
+              Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF15803D)),
+            child: const Text('Apply', style: TextStyle(color: Colors.white)),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dlgCtx),
-              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final text = controller.text.trim();
-                final parsed = double.tryParse(text);
-                if (parsed != null && parsed >= 1.0) {
-                  final clamped = parsed.clamp(1.0, cluster.availableStockKg);
-                  onSelected(clamped);
-                  Navigator.pop(dlgCtx);
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF15803D),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              child: const Text('Apply Quantity', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
-  /// Comprehensive Cluster Inspection Sheet featuring Google Maps & OSM with layer switching
+  // Multi-Stop Real Road Route Inspection Sheet with FlutterMap (OSRM Road Snapped)
   void _showClusterInspectionSheet(BuildContext context, FarmerCluster cluster) {
     showModalBottomSheet(
       context: context,
@@ -1053,9 +891,28 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
       builder: (ctx) {
         final hubPos = LatLng(cluster.hubLat, cluster.hubLng);
         int mapTypeIndex = 0;
+        RoadRouteResult? roadRoute;
+        bool isRouteLoading = true;
+        bool hasFetched = false;
 
         return StatefulBuilder(
           builder: (context, setInspectionState) {
+            // Fetch live OSRM road geometry once when modal builds
+            if (!hasFetched) {
+              hasFetched = true;
+              final waypoints = [
+                hubPos,
+                ...cluster.farmers.map((f) => LatLng(f.lat, f.lng)),
+                hubPos,
+              ];
+              RoadRoutingService().getMultiStopRoute(waypoints, optimizeStops: true).then((res) {
+                setInspectionState(() {
+                  roadRoute = res;
+                  isRouteLoading = false;
+                });
+              });
+            }
+
             String tileUrl;
             switch (mapTypeIndex) {
               case 1:
@@ -1069,6 +926,9 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                 tileUrl = 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'; // Google Road
                 break;
             }
+
+            final fallbackPoints = [hubPos, ...cluster.farmers.map((f) => LatLng(f.lat, f.lng)), hubPos];
+            final polylinePoints = roadRoute?.points ?? fallbackPoints;
 
             return Container(
               height: MediaQuery.of(context).size.height * 0.90,
@@ -1133,7 +993,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                'Neighboring Farms GPS Map',
+                                'Multi-Stop Pickup Road Route',
                                 style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
                               ),
                               Row(
@@ -1149,13 +1009,13 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Verified GPS coordinates of smallholder farms in this pooled cluster.',
+                            'Optimized asphalt road routing across smallholder farms in this pooled belt.',
                             style: GoogleFonts.inter(fontSize: 11.5, color: Colors.grey.shade600),
                           ),
                           const SizedBox(height: 10),
 
                           Container(
-                            height: 230,
+                            height: 240,
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(16),
                               border: Border.all(color: Colors.grey.shade300),
@@ -1165,7 +1025,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                               child: FlutterMap(
                                 options: MapOptions(
                                   initialCenter: hubPos,
-                                  initialZoom: 12.2,
+                                  initialZoom: 12.0,
                                   interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
                                 ),
                                 children: [
@@ -1174,32 +1034,39 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                                     userAgentPackageName: 'com.agrichain.app',
                                   ),
 
-                                  // Proximity radius circle
+                                  // Proximity radius circle (7 km)
                                   CircleLayer(
                                     circles: [
                                       CircleMarker(
                                         point: hubPos,
-                                        radius: (cluster.maxInterFarmDistance * 1000) / 2 + 500,
+                                        radius: (cluster.maxInterFarmDistance * 1000).clamp(2500, 7000),
                                         useRadiusInMeter: true,
-                                        color: const Color(0xFF15803D).withValues(alpha: 0.14),
+                                        color: const Color(0xFF15803D).withValues(alpha: 0.10),
                                         borderColor: const Color(0xFF15803D),
-                                        borderStrokeWidth: 2,
+                                        borderStrokeWidth: 1.5,
                                       ),
                                     ],
                                   ),
 
-                                  // Lines connecting farms to hub
+                                  // Real Asphalt Road Polyline (OSRM Driving Route)
                                   PolylineLayer(
-                                    polylines: cluster.farmers.map((f) {
-                                      return Polyline(
-                                        points: [hubPos, LatLng(f.lat, f.lng)],
-                                        strokeWidth: 2.5,
-                                        color: const Color(0xFF15803D).withValues(alpha: 0.7),
-                                      );
-                                    }).toList(),
+                                    polylines: [
+                                      // Outer casing
+                                      Polyline(
+                                        points: polylinePoints,
+                                        strokeWidth: 5.5,
+                                        color: const Color(0xFF064E3B),
+                                      ),
+                                      // Highway centerline
+                                      Polyline(
+                                        points: polylinePoints,
+                                        strokeWidth: 3.5,
+                                        color: const Color(0xFF10B981),
+                                      ),
+                                    ],
                                   ),
 
-                                  // Farmer pins
+                                  // Numbered Pickup Markers along the road
                                   MarkerLayer(
                                     markers: [
                                       // Hub Pin
@@ -1211,32 +1078,40 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                                           decoration: BoxDecoration(
                                             color: const Color(0xFF15803D),
                                             shape: BoxShape.circle,
-                                            border: Border.all(color: Colors.white, width: 2),
+                                            border: Border.all(color: Colors.white, width: 2.5),
                                             boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
                                           ),
-                                          child: const Icon(Icons.hub, color: Colors.white, size: 22),
+                                          child: const Center(
+                                            child: Icon(Icons.storefront, color: Colors.white, size: 20),
+                                          ),
                                         ),
                                       ),
 
-                                      // Neighbor Farm Pins
-                                      ...cluster.farmers.map((f) {
+                                      // Sequentially Numbered Neighbor Farm Pins
+                                      ...cluster.farmers.asMap().entries.map((entry) {
+                                        final idx = entry.key + 1;
+                                        final f = entry.value;
                                         return Marker(
                                           point: LatLng(f.lat, f.lng),
-                                          width: 40,
-                                          height: 40,
+                                          width: 38,
+                                          height: 38,
                                           child: Tooltip(
-                                            message: '${f.name} (${f.distance} km)',
+                                            message: 'Stop #$idx: ${f.name} (${f.distance} km)',
                                             child: Container(
                                               decoration: BoxDecoration(
                                                 color: Colors.white,
                                                 shape: BoxShape.circle,
-                                                border: Border.all(color: const Color(0xFF15803D), width: 2),
+                                                border: Border.all(color: const Color(0xFF15803D), width: 2.5),
                                                 boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
                                               ),
                                               child: Center(
                                                 child: Text(
-                                                  f.name.isNotEmpty ? f.name[0] : 'K',
-                                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                                                  '$idx',
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Color(0xFF15803D),
+                                                    fontSize: 14,
+                                                  ),
                                                 ),
                                               ),
                                             ),
@@ -1249,16 +1124,65 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                               ),
                             ),
                           ),
+
+                          // Live Road Route Metrics Card
+                          Container(
+                            margin: const EdgeInsets.only(top: 10),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF0FDF4),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFBBF7D0)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.alt_route, color: Color(0xFF15803D), size: 20),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        isRouteLoading
+                                            ? 'Computing OSRM Road Route...'
+                                            : '${roadRoute?.distanceKm.toStringAsFixed(1) ?? cluster.maxInterFarmDistance.toStringAsFixed(1)} km Total Road Pickup Route',
+                                        style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
+                                      ),
+                                      Text(
+                                        isRouteLoading
+                                            ? 'Connecting to road navigation network...'
+                                            : '${roadRoute?.durationMinutes ?? 18} mins pickup ETA • ${cluster.farmers.length} farm stops consolidated',
+                                        style: GoogleFonts.inter(fontSize: 11, color: Colors.grey.shade700),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF15803D),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Text(
+                                    'OSRM Road Snapped',
+                                    style: TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                           const SizedBox(height: 18),
 
-                          // 2. Verified Smallholder Digital Signatures
+                          // 2. Pooled Neighbor Farmers
                           Text(
                             'Pooled Neighbor Farmers (${cluster.farmers.length})',
                             style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
                           ),
                           const SizedBox(height: 8),
 
-                          ...cluster.farmers.map((f) {
+                          ...cluster.farmers.asMap().entries.map((entry) {
+                            final idx = entry.key + 1;
+                            final f = entry.value;
                             return Container(
                               margin: const EdgeInsets.only(bottom: 8),
                               padding: const EdgeInsets.all(12),
@@ -1270,10 +1194,10 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                               child: Row(
                                 children: [
                                   CircleAvatar(
-                                    backgroundColor: const Color(0xFFE0F2FE),
+                                    backgroundColor: const Color(0xFFDCFCE7),
                                     child: Text(
-                                      f.name.isNotEmpty ? f.name[0] : 'K',
-                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0369A1)),
+                                      '#$idx',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -1422,7 +1346,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  /// Clean, dedicated Quick-Buy Sheet with custom kg order selection
+  /// Clean, dedicated Quick-Buy Sheet with custom kg order selection fulfilling buyer demand
   void _showClusterBuySheet(BuildContext context, FarmerCluster cluster) {
     showModalBottomSheet(
       context: context,
@@ -1451,181 +1375,87 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                     children: [
                       Center(
                         child: Container(
-                          width: 44,
+                          width: 40,
                           height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade300,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
+                          decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
                         ),
                       ),
                       const SizedBox(height: 14),
 
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
+                          Text(cluster.imageEmoji, style: const TextStyle(fontSize: 26)),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Buy: ${cluster.crop}',
-                                  style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                                  cluster.crop,
+                                  style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
                                 ),
                                 Text(
-                                  'Wholesale Rate: ₹${cluster.wholesalePrice.toStringAsFixed(0)}/kg (Stock: ${cluster.availableStockKg.toStringAsFixed(0)} kg)',
-                                  style: GoogleFonts.inter(fontSize: 12, color: Colors.grey.shade600),
+                                  '₹${cluster.wholesalePrice.toStringAsFixed(0)}/kg wholesale rate (${cluster.totalFarms} pooled farms)',
+                                  style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF15803D), fontWeight: FontWeight.bold),
                                 ),
                               ],
                             ),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: () => Navigator.pop(ctx),
-                          ),
                         ],
                       ),
-                      const Divider(height: 20),
+                      const Divider(height: 24),
 
                       // Stepper & Custom Quantity
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'Your Required Quantity (kg)',
-                            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Select Order Quantity', style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13)),
+                              Text('Min: 5 kg • In Stock: ${cluster.availableStockKg.toStringAsFixed(0)} kg', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                            ],
                           ),
-                          TextButton.icon(
-                            onPressed: () {
-                              _showCustomQuantityDialog(
-                                context,
-                                cluster,
-                                currentQty,
-                                (val) {
-                                  setModalState(() => _setQuantity(clusterId, val));
-                                },
-                              );
-                            },
-                            icon: const Icon(Icons.edit, size: 14, color: Color(0xFF15803D)),
-                            label: const Text('Custom kg', style: TextStyle(fontSize: 12, color: Color(0xFF15803D), fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-
-                      Row(
-                        children: [
-                          IconButton.filledTonal(
-                            onPressed: currentQty > 5.0
-                                ? () {
-                                    setModalState(() {
-                                      _setQuantity(clusterId, currentQty - 5.0);
-                                    });
+                          Row(
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.remove_circle, color: Color(0xFF15803D), size: 28),
+                                onPressed: () {
+                                  if (currentQty > 5) {
+                                    setModalState(() => _setQuantity(clusterId, currentQty - 5));
                                   }
-                                : null,
-                            icon: const Icon(Icons.remove),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () {
-                                _showCustomQuantityDialog(
-                                  context,
-                                  cluster,
-                                  currentQty,
-                                  (val) {
-                                    setModalState(() => _setQuantity(clusterId, val));
-                                  },
-                                );
-                              },
-                              child: Container(
-                                height: 48,
-                                alignment: Alignment.center,
+                                },
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFFF1F5F9),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: const Color(0xFFCBD5E1)),
+                                  borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      '${currentQty.toStringAsFixed(0)} kg',
-                                      style: GoogleFonts.spaceMono(fontSize: 20, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    const Icon(Icons.edit, size: 14, color: Color(0xFF64748B)),
-                                  ],
+                                child: Text(
+                                  '${currentQty.toStringAsFixed(0)} kg',
+                                  style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold),
                                 ),
                               ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          IconButton.filledTonal(
-                            onPressed: currentQty < cluster.availableStockKg
-                                ? () {
-                                    setModalState(() {
-                                      _setQuantity(clusterId, currentQty + 5.0);
-                                    });
+                              IconButton(
+                                icon: const Icon(Icons.add_circle, color: Color(0xFF15803D), size: 28),
+                                onPressed: () {
+                                  if (currentQty + 5 <= cluster.availableStockKg) {
+                                    setModalState(() => _setQuantity(clusterId, currentQty + 5));
                                   }
-                                : null,
-                            icon: const Icon(Icons.add),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Quick select pill options
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          ...[10.0, 25.0, 50.0, 100.0, 250.0].map((qty) {
-                            final isSelected = currentQty == qty;
-                            return ChoiceChip(
-                              label: Text('${qty.toInt()} kg'),
-                              selected: isSelected,
-                              onSelected: (selected) {
-                                if (selected) {
-                                  setModalState(() {
-                                    _setQuantity(clusterId, qty);
-                                  });
-                                }
-                              },
-                              selectedColor: const Color(0xFF15803D),
-                              backgroundColor: Colors.white,
-                              labelStyle: TextStyle(
-                                color: isSelected ? Colors.white : const Color(0xFF1E293B),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                              ),
-                            );
-                          }),
-                          ActionChip(
-                            avatar: const Icon(Icons.edit, size: 13, color: Color(0xFF15803D)),
-                            label: const Text('Custom kg'),
-                            onPressed: () {
-                              _showCustomQuantityDialog(
-                                context,
-                                cluster,
-                                currentQty,
-                                (val) {
-                                  setModalState(() => _setQuantity(clusterId, val));
                                 },
-                              );
-                            },
-                            labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
-                            backgroundColor: const Color(0xFFF0FDF4),
-                            side: const BorderSide(color: Color(0xFF86EFAC)),
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
 
-                      // Multi-Farmer Fulfillment Allocation Box
+                      // Multi-Farmer Fulfillment Allocation Preview
                       _buildFulfillmentAllocation(cluster.farmers, currentQty),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
 
-                      // Price & Savings Box
+                      // Price Summary
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -1639,10 +1469,10 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Cluster Total Payable', style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF166534))),
+                                const Text('Total Escrow Payable', style: TextStyle(fontSize: 11, color: Color(0xFF15803D))),
                                 Text(
                                   '₹${totalPayable.toStringAsFixed(0)}',
-                                  style: GoogleFonts.outfit(fontSize: 24, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
+                                  style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
                                 ),
                               ],
                             ),
@@ -1721,7 +1551,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
           ),
           const SizedBox(height: 8),
 
-          // Multi-color segmented progress bar
+          // Segmented progress bar
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: SizedBox(

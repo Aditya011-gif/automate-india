@@ -300,7 +300,10 @@ class _RetailBuyerFindScreenState extends State<RetailBuyerFindScreen> {
             final cropName = c['name'] ?? c['cropName'] ?? 'Crop';
             final variety = c['variety'] ?? 'Grade 1 Quality';
             final grade = c['qualityGrade'] ?? 'Grade A';
-            final price = _toDouble(c['price']);
+            double price = _toDouble(c['price']);
+            if (price > 300) {
+              price = (price / 100).roundToDouble();
+            }
             final quantity = _toDouble(c['quantity']);
             const unit = 'kg';
             final farmerName = c['farmerName'] ?? 'Farmer';

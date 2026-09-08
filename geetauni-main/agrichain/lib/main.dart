@@ -368,10 +368,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     const BuyerInvoicesScreen(),
   ];
 
-  // Retail Buyer screens (5 primary tabs: Home, Group Buy, Orders, Saved, Profile)
+  // Retail Buyer screens (5 primary tabs: Home, 7km Clusters, Orders, Saved, Profile)
   late final List<Widget> _retailBuyerScreens = [
     RetailBuyerHomeScreen(onNavigateTab: _onTabTapped),
-    const GroupBuyingScreen(),
+    GroupBuyingScreen(onNavigateTab: _onTabTapped),
     const RetailBuyerOrdersScreen(),
     RetailBuyerSavedScreen(onNavigateTab: _onTabTapped),
     RetailBuyerProfileScreen(onNavigateTab: _onTabTapped),
@@ -472,14 +472,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   List<BottomNavigationBarItem> _getRetailBuyerNavItems(AppLocalizations? l10n) => [
     const BottomNavigationBarItem(
-      icon: Icon(Icons.storefront_outlined),
-      activeIcon: Icon(Icons.storefront),
+      icon: Icon(Icons.home_outlined),
+      activeIcon: Icon(Icons.home),
       label: 'Fresh Shop',
     ),
     const BottomNavigationBarItem(
       icon: Icon(Icons.hub_outlined),
       activeIcon: Icon(Icons.hub),
-      label: 'Farmer Clusters',
+      label: '7km Clusters',
     ),
     const BottomNavigationBarItem(
       icon: Icon(Icons.shopping_bag_outlined),

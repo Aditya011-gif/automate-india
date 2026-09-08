@@ -1,11 +1,10 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../services/smart_contract_pdf_service.dart';
+import '../services/road_routing_service.dart';
 
 /// Modal Bottom Sheet providing live Google Maps & OpenStreetMap tracking for crop orders.
 /// Displays farm origin, courier in transit along real asphalt roads (OSRM geometry),
@@ -94,42 +93,26 @@ class _CropTrackingMapSheetState extends State<CropTrackingMapSheet> with Single
     _roadEtaMins = 25;
   }
 
-  /// Live Real Road Snapped Route from OSRM Driving API
+  /// Live Real Road Snapped Route from OSRM Driving API via RoadRoutingService
   Future<void> _fetchRealRoadRoute(double startLat, double startLng, double endLat, double endLng) async {
     try {
-      final url = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson',
-      );
-      final response = await http.get(url).timeout(const Duration(seconds: 4));
+      final result = await RoadRoutingService().getMultiStopRoute([
+        LatLng(startLat, startLng),
+        LatLng(endLat, endLng),
+      ]);
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['routes'] != null && (data['routes'] as List).isNotEmpty) {
-          final route = data['routes'][0];
-          final coords = route['geometry']['coordinates'] as List;
-
-          final List<LatLng> points = [];
-          for (final c in coords) {
-            points.add(LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()));
-          }
-
-          final distKm = ((route['distance'] as num?)?.toDouble() ?? 8400.0) / 1000.0;
-          final durationMins = ((route['duration'] as num?)?.toDouble() ?? 1500.0) / 60.0;
-
-          if (mounted && points.isNotEmpty) {
-            setState(() {
-              _routePoints = points;
-              _roadDistanceKm = double.parse(distKm.toStringAsFixed(1));
-              _roadEtaMins = durationMins.round().clamp(10, 120);
-              _isLoadingRoute = false;
-              _updateCourierPositionOnRoad();
-            });
-            return;
-          }
-        }
+      if (mounted && result.points.isNotEmpty) {
+        setState(() {
+          _routePoints = result.points;
+          _roadDistanceKm = result.distanceKm;
+          _roadEtaMins = result.durationMinutes;
+          _isLoadingRoute = false;
+          _updateCourierPositionOnRoad();
+        });
+        return;
       }
     } catch (e) {
-      debugPrint('⚠️ OSRM live routing notice (using fallback): $e');
+      debugPrint('⚠️ Routing service notice (using fallback): $e');
     }
 
     if (mounted) {

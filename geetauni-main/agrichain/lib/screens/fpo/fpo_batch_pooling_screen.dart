@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/multi_fpo_clustering_service.dart';
+import '../../services/road_routing_service.dart';
 import '../../models/shared_bulk_order_model.dart';
 import 'fpo_order_shipment_screen.dart';
 
@@ -24,6 +25,7 @@ class _FpoBatchPoolingScreenState extends State<FpoBatchPoolingScreen> {
   final LatLng _clusterHubCenter = const LatLng(29.6857, 76.9905); // Karnal Central Hub
 
   late SharedBulkOrder _activeSharedOrder;
+  List<LatLng> _roadPolyline = [];
 
   @override
   void initState() {
@@ -39,6 +41,15 @@ class _FpoBatchPoolingScreenState extends State<FpoBatchPoolingScreen> {
       destinationLat: 28.5355,
       destinationLng: 77.3910,
     );
+    _loadRoadRoute();
+  }
+
+  void _loadRoadRoute() async {
+    final points = _activeSharedOrder.contributions.map((c) => LatLng(c.warehouseLat, c.warehouseLng)).toList();
+    final res = await RoadRoutingService().getMultiStopRoute(points);
+    if (mounted && res.points.isNotEmpty) {
+      setState(() => _roadPolyline = res.points);
+    }
   }
 
   @override
@@ -282,11 +293,22 @@ class _FpoBatchPoolingScreenState extends State<FpoBatchPoolingScreen> {
                     ],
                   ),
 
-                  // Polyline connecting the 3 FPO Godowns
+                  // Real Asphalt Road Polyline connecting the FPO Godowns
                   PolylineLayer(
                     polylines: [
+                      // Outer casing
                       Polyline(
-                        points: _activeSharedOrder.contributions.map((c) => LatLng(c.warehouseLat, c.warehouseLng)).toList(),
+                        points: _roadPolyline.isNotEmpty
+                            ? _roadPolyline
+                            : _activeSharedOrder.contributions.map((c) => LatLng(c.warehouseLat, c.warehouseLng)).toList(),
+                        strokeWidth: 5.0,
+                        color: const Color(0xFF004D40),
+                      ),
+                      // Highway centerline
+                      Polyline(
+                        points: _roadPolyline.isNotEmpty
+                            ? _roadPolyline
+                            : _activeSharedOrder.contributions.map((c) => LatLng(c.warehouseLat, c.warehouseLng)).toList(),
                         strokeWidth: 3.0,
                         color: const Color(0xFF00796B),
                       ),
