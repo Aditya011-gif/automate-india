@@ -10,6 +10,7 @@ import '../../services/fpo_inventory_service.dart';
 import '../../services/multi_fpo_cluster_service.dart';
 import '../../services/road_routing_service.dart';
 import 'escrow_checkout_screen.dart';
+import '../../widgets/fpo_lot_details_modal.dart';
 
 /// Screen: FPO Supply & Multi-FPO Clusters (Bulk Buyer)
 /// Redesigned with the clean, airy, un-clustered aesthetic from the farmer produce pooling screen.
@@ -1689,194 +1690,250 @@ class _BulkBuyerSupplyScreenState extends State<BulkBuyerSupplyScreen>
             final rating = lot['rating'] as double;
             final siloType = lot['siloType'] as String;
 
-            return Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.04),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Photo Banner
-                  Stack(
-                    children: [
-                      ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
-                        child: CropImageHelper.buildCropImage(
-                          null,
-                          commodity,
-                          height: 130,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-
-                      // Verified FPO Badge (Top-Left)
-                      Positioned(
-                        top: 10,
-                        left: 10,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF15803D),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(Icons.verified, color: Colors.white, size: 12),
-                              SizedBox(width: 4),
-                              Text(
-                                'Verified FPO Godown',
-                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      // Rating Badge (Top-Right)
-                      Positioned(
-                        top: 10,
-                        right: 10,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.75),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.star, color: Colors.amber, size: 12),
-                              const SizedBox(width: 3),
-                              Text(
-                                '$rating',
-                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+            return InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => _openLotPassportModal(lot),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Photo Banner
+                    Stack(
                       children: [
-                        // FPO Name & Location
-                        Text(
-                          fpoName,
-                          style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            const Icon(Icons.location_on, size: 13, color: Color(0xFF15803D)),
-                            const SizedBox(width: 4),
-                            Text(location, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-
-                        // Metrics Strip
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFFE2E8F0)),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text('Direct Lot Rate', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
-                                  Text(
-                                    '₹${price.toStringAsFixed(0)}/Qtl',
-                                    style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
-                                  ),
-                                ],
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  const Text('Available Stock', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
-                                  Text(
-                                    '${qty.toStringAsFixed(0)} Qtl',
-                                    style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
-                                  ),
-                                ],
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  const Text('Moisture Level', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
-                                  Text(
-                                    moisture,
-                                    style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0284C7)),
-                                  ),
-                                ],
-                              ),
-                            ],
+                        ClipRRect(
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
+                          child: CropImageHelper.buildCropImage(
+                            null,
+                            commodity,
+                            height: 130,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
                           ),
                         ),
-                        const SizedBox(height: 10),
 
-                        // Commodity & Silo details
-                        Text(
-                          '$commodity • $variety',
-                          style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF334155)),
-                        ),
-                        Text(
-                          siloType,
-                          style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-                        ),
-                        const SizedBox(height: 14),
-
-                        // Action Button
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: () => _showDirectPurchaseModal(
-                              fpoName,
-                              commodity,
-                              qty,
-                              price,
-                              fpoId: lot['fpoId'] as String?,
-                              inventoryItemId: lot['inventoryItemId'] as String? ?? lot['id'] as String?,
-                              variety: variety,
+                        // Verified FPO Badge (Top-Left)
+                        Positioned(
+                          top: 10,
+                          left: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF15803D),
+                              borderRadius: BorderRadius.circular(6),
                             ),
-                            icon: const Icon(Icons.shopping_bag_outlined, size: 16),
-                            label: Text('Send Purchase Order / Contract (${qty.toInt()} Qtl)'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF15803D),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.verified, color: Colors.white, size: 12),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Verified FPO Godown',
+                                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                        // Rating Badge (Top-Right)
+                        Positioned(
+                          top: 10,
+                          right: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.75),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.star, color: Colors.amber, size: 12),
+                                const SizedBox(width: 3),
+                                Text(
+                                  '$rating',
+                                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                ),
+                              ],
                             ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ],
+
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // FPO Name & Location
+                          Text(
+                            fpoName,
+                            style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              const Icon(Icons.location_on, size: 13, color: Color(0xFF15803D)),
+                              const SizedBox(width: 4),
+                              Text(location, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+
+                          // Metrics Strip
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFE2E8F0)),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('Direct Lot Rate', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                                    Text(
+                                      '₹${price.toStringAsFixed(0)}/Qtl',
+                                      style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
+                                    ),
+                                  ],
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    const Text('Available Stock', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                                    Text(
+                                      '${qty.toStringAsFixed(0)} Qtl',
+                                      style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                                    ),
+                                  ],
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    const Text('Moisture Level', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                                    Text(
+                                      moisture,
+                                      style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0284C7)),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+
+                          // Commodity & Silo details
+                          Text(
+                            '$commodity • $variety',
+                            style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF334155)),
+                          ),
+                          Text(
+                            siloType,
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                          ),
+                          const SizedBox(height: 14),
+
+                          // Action Buttons
+                          Row(
+                            children: [
+                              Expanded(
+                                flex: 3,
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _openLotPassportModal(lot),
+                                  icon: const Icon(Icons.verified_outlined, size: 15),
+                                  label: Text('Inspect Passport (${qty.toInt()} Qtl)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF15803D),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                height: 44,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _showDirectPurchaseModal(
+                                    fpoName,
+                                    commodity,
+                                    qty,
+                                    price,
+                                    fpoId: lot['fpoId'] as String?,
+                                    inventoryItemId: lot['inventoryItemId'] as String? ?? lot['id'] as String?,
+                                    variety: variety,
+                                  ),
+                                  icon: const Icon(Icons.tune, size: 14),
+                                  label: const Text('Custom Qty', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF15803D),
+                                    side: const BorderSide(color: Color(0xFF15803D)),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           },
         );
       },
+    );
+  }
+
+  void _openLotPassportModal(Map<String, dynamic> lot) {
+    final commodity = lot['commodity'] as String;
+    final variety = lot['variety'] as String;
+    final fpoName = lot['fpoName'] as String;
+    final location = lot['location'] as String;
+    final qty = (lot['availableQtyMT'] as num).toDouble();
+    final price = (lot['pricePerQtl'] as num).toDouble();
+    final moisture = lot['moisture'] as String;
+
+    final availableMt = qty / 10.0;
+    final totalMt = (availableMt * 1.25).clamp(availableMt, 2000.0);
+    final reservedMt = (totalMt - availableMt).clamp(0.0, totalMt);
+
+    FpoLotDetailsModal.show(
+      context,
+      cropName: commodity,
+      variety: variety,
+      siloLocation: '$location • $fpoName',
+      totalMt: totalMt,
+      availableMt: availableMt,
+      reservedMt: reservedMt,
+      pricePerQtl: price,
+      pricePerMt: price * 10.0,
+      qualityGrade: 'Industrial Grade 1',
+      moistureText: '$moisture (Optimal)',
+      fpoName: fpoName,
+      fpoId: lot['fpoId'] as String?,
+      inventoryItemId: lot['inventoryItemId'] as String? ?? lot['id'] as String?,
+      isBuyer: true,
+      isRetail: false,
     );
   }
 

@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../utils/crop_image_helper.dart';
 import '../screens/bulk_buyer/escrow_checkout_screen.dart';
+import '../screens/retail_buyer/retail_checkout_screen.dart';
 
 /// Comprehensive, rich, and detailed FPO Commodity Lot Passport Modal Sheet.
 /// Displays deep warehouse telemetry, atomic reservation math, physical assaying
@@ -25,6 +26,8 @@ class FpoLotDetailsModal {
     String? fpoId,
     String? fpoName,
     String? inventoryItemId,
+    bool isBuyer = false,
+    bool isRetail = false,
     VoidCallback? onRunAiAssay,
   }) {
     showModalBottomSheet(
@@ -58,6 +61,8 @@ class FpoLotDetailsModal {
               fpoId: fpoId,
               fpoName: fpoName,
               inventoryItemId: inventoryItemId,
+              isBuyer: isBuyer,
+              isRetail: isRetail,
               onRunAiAssay: onRunAiAssay,
             );
           },
@@ -85,6 +90,8 @@ class _FpoLotDetailsContent extends StatefulWidget {
   final String? fpoId;
   final String? fpoName;
   final String? inventoryItemId;
+  final bool isBuyer;
+  final bool isRetail;
   final VoidCallback? onRunAiAssay;
 
   const _FpoLotDetailsContent({
@@ -104,6 +111,8 @@ class _FpoLotDetailsContent extends StatefulWidget {
     this.fpoId,
     this.fpoName,
     this.inventoryItemId,
+    this.isBuyer = false,
+    this.isRetail = false,
     this.onRunAiAssay,
   });
 
@@ -149,6 +158,10 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
     final reservedQtl = widget.reservedMt * 10;
     final totalValuation = totalQtl * widget.pricePerQtl;
     final availableValuation = availableQtl * widget.pricePerQtl;
+
+    final pricePerKg = widget.pricePerQtl > 300 ? widget.pricePerQtl / 100.0 : widget.pricePerQtl;
+    final priceDisplay = widget.isRetail ? '₹${pricePerKg.toStringAsFixed(0)} / kg' : '₹${widget.pricePerQtl.toStringAsFixed(0)} / Quintal';
+    final subPriceDisplay = widget.isRetail ? '₹${(pricePerKg * 100).toStringAsFixed(0)} / Qtl' : '₹${widget.pricePerMt.toStringAsFixed(0)} / MT';
 
     return ListView(
       controller: widget.scrollController,
@@ -318,7 +331,7 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    '${widget.variety} • Central Silo Complex 01, Taraori, Karnal',
+                    '${widget.variety} • ${widget.siloLocation}',
                     style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
                   ),
                 ],
@@ -328,7 +341,7 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '₹${widget.pricePerQtl.toStringAsFixed(0)} / Quintal',
+                  priceDisplay,
                   style: GoogleFonts.inter(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -336,7 +349,7 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
                   ),
                 ),
                 Text(
-                  '₹${widget.pricePerQtl.toStringAsFixed(0)} / Qtl',
+                  subPriceDisplay,
                   style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.w600),
                 ),
               ],
@@ -360,7 +373,7 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Warehouse Stock Allocation',
+                    widget.isRetail ? 'Farm Stock & Lot Availability' : 'Warehouse Stock Allocation',
                     style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 14),
                   ),
                   Text(
@@ -394,11 +407,26 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildTonnageTile('Total In Silo', '${totalQtl.toStringAsFixed(0)} Qtl', const Color(0xFF0F172A), 'Physical Stock'),
+                  _buildTonnageTile(
+                    widget.isRetail ? 'Total Farm Lot' : 'Total In Silo',
+                    widget.isRetail ? '${(widget.totalMt * 1000).toStringAsFixed(0)} kg' : '${totalQtl.toStringAsFixed(0)} Qtl',
+                    const Color(0xFF0F172A),
+                    'Physical Stock',
+                  ),
                   Container(width: 1, height: 32, color: Colors.grey.shade300),
-                  _buildTonnageTile('Available to Contract', '${availableQtl.toStringAsFixed(0)} Qtl', const Color(0xFF15803D), 'Immediate Delivery'),
+                  _buildTonnageTile(
+                    widget.isRetail ? 'Available to Order' : 'Available to Contract',
+                    widget.isRetail ? '${(widget.availableMt * 1000).toStringAsFixed(0)} kg' : '${availableQtl.toStringAsFixed(0)} Qtl',
+                    const Color(0xFF15803D),
+                    'Immediate Delivery',
+                  ),
                   Container(width: 1, height: 32, color: Colors.grey.shade300),
-                  _buildTonnageTile('Locked in Escrow', '${reservedQtl.toStringAsFixed(0)} Qtl', const Color(0xFFD97706), 'Under Active PO'),
+                  _buildTonnageTile(
+                    'Locked in Escrow',
+                    widget.isRetail ? '${(widget.reservedMt * 1000).toStringAsFixed(0)} kg' : '${reservedQtl.toStringAsFixed(0)} Qtl',
+                    const Color(0xFFD97706),
+                    'Under Active PO',
+                  ),
                 ],
               ),
 
@@ -410,7 +438,9 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        '${reservedQtl.toStringAsFixed(0)} Qtl is locked for ITC Limited (PO-ITC-3000QTL-NH44) awaiting dispatch.',
+                        widget.isRetail
+                            ? '${(widget.reservedMt * 1000).toStringAsFixed(0)} kg is locked in buyer escrow awaiting dispatch.'
+                            : '${reservedQtl.toStringAsFixed(0)} Qtl is locked for ITC Limited (PO-ITC-3000QTL-NH44) awaiting dispatch.',
                         style: const TextStyle(fontSize: 11, color: Color(0xFF92400E), fontWeight: FontWeight.w500),
                       ),
                     ),
@@ -424,7 +454,7 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
 
         // 6. REAL-TIME SILO ENVIRONMENTAL TELEMETRY
         Text(
-          'Silo Environmental Telemetry',
+          widget.isRetail ? 'Storage & Post-Harvest Telemetry' : 'Silo Environmental Telemetry',
           style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
         ),
         const SizedBox(height: 8),
@@ -501,11 +531,31 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
           ),
           child: Column(
             children: [
-              _buildTermItem('Minimum Order Quantity (MOQ)', '250 Quintals (1 Full Truckload / FTL)', Icons.fire_truck_outlined),
-              _buildTermItem('Dispatch Lead Time', '24 - 48 Hours post-Escrow Confirmation', Icons.schedule),
-              _buildTermItem('Weighbridge Specifications', '600-Quintal Electronic (NABL Haryana Calibrated)', Icons.scale_outlined),
-              _buildTermItem('Mandi Cess & Tax Exemption', '0% GST (Tax Exempt) • 0.5% HR Mandi Cess', Icons.receipt_long_outlined),
-              _buildTermItem('Escrow Settlement Type', 'Multi-FPO Isolated Smart Contract Escrow', Icons.verified_user_outlined),
+              _buildTermItem(
+                'Minimum Order Quantity (MOQ)',
+                widget.isRetail ? '5 kg (Flexible Direct Purchase)' : '250 Quintals (1 Full Truckload / FTL)',
+                Icons.local_shipping_outlined,
+              ),
+              _buildTermItem(
+                'Dispatch Lead Time',
+                widget.isRetail ? 'Same-Day / 24 Hours Direct Farm Dispatch' : '24 - 48 Hours post-Escrow Confirmation',
+                Icons.schedule,
+              ),
+              _buildTermItem(
+                'Weighbridge Specifications',
+                widget.isRetail ? 'Electronic Certified Precision Scale (NABL Calibrated)' : '600-Quintal Electronic (NABL Haryana Calibrated)',
+                Icons.scale_outlined,
+              ),
+              _buildTermItem(
+                'Mandi Cess & Tax Exemption',
+                '0% GST (Tax Exempt) • Zero Intermediary Cuts',
+                Icons.receipt_long_outlined,
+              ),
+              _buildTermItem(
+                'Escrow Settlement Type',
+                widget.isRetail ? 'Buyer Safe Escrow Protection (Instant Disbursal on Verified Delivery)' : 'Multi-FPO Isolated Smart Contract Escrow',
+                Icons.verified_user_outlined,
+              ),
             ],
           ),
         ),
@@ -542,84 +592,127 @@ class _FpoLotDetailsContentState extends State<_FpoLotDetailsContent> {
         const SizedBox(height: 20),
 
         // 10. PRIMARY PROCUREMENT ACTION
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              final qtyMt = widget.availableMt > 0 ? (widget.availableMt > 250 ? 250.0 : widget.availableMt) : 100.0;
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => EscrowCheckoutScreen(
-                    commodity: '${widget.cropName} (${widget.variety})',
-                    variety: widget.variety,
-                    originCluster: widget.siloLocation,
-                    orderedTonnage: qtyMt,
-                    cropRatePerTonne: widget.pricePerMt,
-                    orderedQuantityQtl: qtyMt * 10,
-                    cropRatePerQtl: widget.pricePerQtl,
-                    fpoId: widget.fpoId ?? 'fpo_karnal_01',
-                    fpoName: widget.fpoName ?? 'Karnal Agro Farmers Producer Co.',
-                    inventoryItemId: widget.inventoryItemId,
-                  ),
-                ),
-              );
-            },
-            icon: const Icon(Icons.lock, size: 16, color: Colors.white),
-            label: Text(
-              'Order Lot & Escrow Lock (@ ₹${widget.pricePerQtl.toStringAsFixed(0)}/Qtl)',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1B5E20),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        if (widget.isBuyer) ...[
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                if (widget.isRetail) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => RetailCheckoutScreen(
+                        crop: {
+                          'id': widget.inventoryItemId ?? 'LOT-${widget.cropName}',
+                          'name': widget.cropName,
+                          'crop': widget.cropName,
+                          'variety': widget.variety,
+                          'qualityGrade': widget.qualityGrade,
+                          'price': pricePerKg,
+                          'farmerName': widget.fpoName ?? 'Direct Farm Lot',
+                          'location': widget.siloLocation,
+                          'quantity': '${(widget.availableMt * 1000).toStringAsFixed(0)} kg',
+                          'availableStockKg': widget.availableMt * 1000,
+                          'imageUrl': widget.imageUrl ?? '',
+                        },
+                      ),
+                    ),
+                  );
+                } else {
+                  final qtyMt = widget.availableMt > 0 ? (widget.availableMt > 250 ? 250.0 : widget.availableMt) : 100.0;
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => EscrowCheckoutScreen(
+                        commodity: '${widget.cropName} (${widget.variety})',
+                        variety: widget.variety,
+                        originCluster: widget.siloLocation,
+                        orderedTonnage: qtyMt,
+                        cropRatePerTonne: widget.pricePerMt,
+                        orderedQuantityQtl: qtyMt * 10,
+                        cropRatePerQtl: widget.pricePerQtl,
+                        fpoId: widget.fpoId ?? 'fpo_karnal_01',
+                        fpoName: widget.fpoName ?? 'Karnal Agro Farmers Producer Co.',
+                        inventoryItemId: widget.inventoryItemId,
+                      ),
+                    ),
+                  );
+                }
+              },
+              icon: Icon(widget.isRetail ? Icons.shopping_bag_outlined : Icons.lock, size: 18, color: Colors.white),
+              label: Text(
+                widget.isRetail
+                    ? 'Buy Direct & Escrow Lock (@ ₹${pricePerKg.toStringAsFixed(0)}/kg)'
+                    : 'Order Lot & Escrow Lock (@ ₹${widget.pricePerQtl.toStringAsFixed(0)}/Qtl)',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF15803D),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 12),
-
-        // Secondary Actions
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _isDownloadingPdf ? null : _triggerDownloadPdf,
-                icon: _isDownloadingPdf
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.download, size: 16),
-                label: Text(_isDownloadingPdf ? 'Generating...' : 'Download Passport', style: const TextStyle(fontSize: 12)),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF0F172A),
-                  side: const BorderSide(color: Color(0xFFCBD5E1)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: OutlinedButton.icon(
+              onPressed: _isDownloadingPdf ? null : _triggerDownloadPdf,
+              icon: _isDownloadingPdf
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.download, size: 16),
+              label: Text(_isDownloadingPdf ? 'Generating...' : 'Download Warehouse Passport', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF0F172A),
+                side: const BorderSide(color: Color(0xFFCBD5E1)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  if (widget.onRunAiAssay != null) {
-                    widget.onRunAiAssay!();
-                  }
-                },
-                icon: const Icon(Icons.auto_awesome, size: 16, color: Colors.white),
-                label: const Text('Run AI Assaying', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2E7D32),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+        ] else ...[
+          // FPO Center Mode: NO ORDER LOT BUTTON! FPO manages own warehouse inventory.
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isDownloadingPdf ? null : _triggerDownloadPdf,
+                  icon: _isDownloadingPdf
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.download, size: 16),
+                  label: Text(_isDownloadingPdf ? 'Generating...' : 'Download Passport', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF0F172A),
+                    side: const BorderSide(color: Color(0xFFCBD5E1)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    if (widget.onRunAiAssay != null) {
+                      widget.onRunAiAssay!();
+                    }
+                  },
+                  icon: const Icon(Icons.auto_awesome, size: 16, color: Colors.white),
+                  label: const Text('Run AI Assaying', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2E7D32),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }

@@ -11,6 +11,7 @@ import '../../models/multi_fpo_cluster_model.dart';
 import '../../utils/crop_image_helper.dart';
 import '../../widgets/language_switcher.dart';
 import 'escrow_checkout_screen.dart';
+import '../../widgets/fpo_lot_details_modal.dart';
 
 class BulkBuyerHomeScreen extends StatefulWidget {
   final Function(int)? onNavigateTab;
@@ -1341,52 +1342,28 @@ class _BulkBuyerHomeScreenState extends State<BulkBuyerHomeScreen> {
   }
 
   void _showBulkLotDetailsModal(BuildContext context, FpoNode lot) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return _BulkLotModalContent(
-          name: lot.commodity,
-          variety: lot.variety,
-          fpoName: lot.fpoName,
-          warehouse: lot.warehouseName,
-          location: 'Haryana GT-Belt',
-          pricePerQtl: lot.pricePerQtl,
-          availableQtl: lot.availableQuantityQtl,
-          minOrderQtl: (lot.availableQuantityQtl * 0.1).clamp(50.0, 250.0),
-          qualityGrade: lot.qualityGrade,
-          moisture: '${lot.moisturePct}%',
-          imageUrl: lot.imageUrl ?? '',
-          onProceedToCheckout: (selectedQtl) {
-            Navigator.pop(ctx);
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => EscrowCheckoutScreen(
-                  commodity: '${lot.commodity} (${lot.variety})',
-                  variety: lot.variety,
-                  originCluster: '${lot.fpoName} (${lot.warehouseName})',
-                  orderedTonnage: selectedQtl / 10.0, // MT
-                  cropRatePerTonne: lot.pricePerQtl * 10.0, // ₹/MT
-                  orderedQuantityQtl: selectedQtl,
-                  cropRatePerQtl: lot.pricePerQtl,
-                  fpoId: lot.fpoId,
-                  fpoName: lot.fpoName,
-                  warehouseId: lot.warehouseName,
-                  inventoryItemId: lot.listingId,
-                ),
+    final availableMt = lot.availableQuantityQtl / 10.0;
+    final totalMt = (availableMt * 1.25).clamp(availableMt, 2000.0);
+    final reservedMt = (totalMt - availableMt).clamp(0.0, totalMt);
 
-
-              ),
-            );
-          },
-          onNavigateToRfqs: () {
-            Navigator.pop(ctx);
-            widget.onNavigateTab?.call(2); // RFQs tab
-          },
-        );
-      },
+    FpoLotDetailsModal.show(
+      context,
+      cropName: lot.commodity,
+      variety: lot.variety,
+      siloLocation: '${lot.warehouseName} • ${lot.fpoName}',
+      totalMt: totalMt,
+      availableMt: availableMt,
+      reservedMt: reservedMt,
+      pricePerQtl: lot.pricePerQtl,
+      pricePerMt: lot.pricePerQtl * 10.0,
+      qualityGrade: lot.qualityGrade,
+      moistureText: '${lot.moisturePct}% (Optimal)',
+      imageUrl: lot.imageUrl,
+      fpoName: lot.fpoName,
+      fpoId: lot.fpoId,
+      inventoryItemId: lot.listingId,
+      isBuyer: true,
+      isRetail: false,
     );
   }
 }

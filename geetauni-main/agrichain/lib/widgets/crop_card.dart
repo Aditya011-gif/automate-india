@@ -18,6 +18,7 @@ import 'package:uuid/uuid.dart';
 import '../models/firestore_models.dart';
 import '../screens/farmer/land_analysis_screen.dart';
 import '../screens/retail_buyer/farmer_public_profile_screen.dart';
+import 'fpo_lot_details_modal.dart';
 
 class CropCard extends StatefulWidget {
   final FirestoreCrop crop;
@@ -465,14 +466,66 @@ class _CropCardState extends State<CropCard>
   }
 
   void _showCropDetails(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _CropDetailsSheet(
-        crop: widget.crop,
-        showPlaceOrder: widget.showPlaceOrder,
-      ),
+    if (widget.crop.isAuction) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) => _CropDetailsSheet(
+          crop: widget.crop,
+          showPlaceOrder: widget.showPlaceOrder,
+        ),
+      );
+      return;
+    }
+
+    final double rawPrice = widget.crop.price;
+    final double pricePerQtl = rawPrice > 300 ? rawPrice : (rawPrice * 100.0);
+    final double pricePerMt = pricePerQtl * 10.0;
+
+    double availableMt = 15.0;
+    final qStr = widget.crop.quantity.toLowerCase();
+    final numMatch = RegExp(r'([0-9]+(?:\.[0-9]+)?)').firstMatch(qStr);
+    if (numMatch != null) {
+      final val = double.tryParse(numMatch.group(1)!) ?? 15.0;
+      if (qStr.contains('kg')) {
+        availableMt = (val / 1000.0).clamp(0.5, 500.0);
+      } else if (qStr.contains('qtl') || qStr.contains('quintal')) {
+        availableMt = (val / 10.0).clamp(0.5, 500.0);
+      } else if (qStr.contains('mt') || qStr.contains('ton')) {
+        availableMt = val.clamp(0.5, 500.0);
+      }
+    }
+    final double totalMt = (availableMt * 1.25).clamp(availableMt, 1000.0);
+    final double reservedMt = (totalMt - availableMt).clamp(0.0, totalMt);
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userType = appState.currentUser?.userType;
+    final bool isBulk = userType == UserType.buyer;
+    final bool isRetail = !isBulk;
+
+    FpoLotDetailsModal.show(
+      context,
+      cropName: widget.crop.name,
+      variety: widget.crop.category?.name.toUpperCase() ?? 'Certified Hybrid',
+      siloLocation: widget.crop.location.isNotEmpty
+          ? widget.crop.location
+          : 'Central Silo Complex 01, Karnal',
+      totalMt: totalMt,
+      availableMt: availableMt,
+      reservedMt: reservedMt,
+      pricePerQtl: pricePerQtl,
+      pricePerMt: pricePerMt,
+      qualityGrade: widget.crop.qualityGrade.name.toUpperCase(),
+      moistureText: '10.8% (Optimal)',
+      imageUrl: widget.crop.imageUrl,
+      fpoName: widget.crop.farmerName.isNotEmpty
+          ? widget.crop.farmerName
+          : 'Direct Certified Farm Hub',
+      fpoId: widget.crop.farmerId,
+      inventoryItemId: widget.crop.id,
+      isBuyer: true,
+      isRetail: isRetail,
     );
   }
 }
