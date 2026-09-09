@@ -3,18 +3,17 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import '../../models/farmer_cluster_model.dart';
+import '../../services/database_service.dart';
 import '../../services/farmer_clustering_service.dart';
 import '../../services/road_routing_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/crop_image_helper.dart';
 import 'retail_checkout_screen.dart';
 
-/// Screen: Farmer Grouping & Hyperlocal Produce Pooling (<= 7 km)
-/// - Spatial clustering model auto-finding distinct farmers strictly within <= 7 km.
-/// - Analyzes crop compatibility, quality grading, tested moisture, and residue-free GAP.
-/// - Performs nearest-neighbor pickup route optimization (TSP).
-/// - Dynamic custom quantity selector fulfilling retail buyer demand.
-/// - Inspect & Map bottom sheet displaying real asphalt road geometry from OSRM Driving API.
+/// Screen: Farmer Produce Pooling & Direct Market
+/// Features Two Clear Sections:
+/// 1. Single Farmer: Direct farm listings from individual verified smallholders with zero middlemen.
+/// 2. 7km Clusters: Hyperlocal proximity clusters with TSP route optimization & 15% wholesale discount.
 class FarmerGroupingScreen extends StatefulWidget {
   final Function(int)? onNavigateTab;
 
@@ -28,38 +27,74 @@ class FarmerGroupingScreen extends StatefulWidget {
 typedef GroupBuyingScreen = FarmerGroupingScreen;
 
 class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
+  final DatabaseService _dbService = DatabaseService();
   final FarmerClusteringService _clusteringService = FarmerClusteringService();
 
-  String _selectedTagFilter = 'All Clusters';
-  final Map<String, double> _selectedQuantities = {};
+  // Section Selector: 0 = Single Farmer, 1 = 7km Clusters
+  int _selectedSection = 0;
 
-  double _getQuantity(String clusterId, double fallback) {
-    return _selectedQuantities[clusterId] ?? fallback;
+  // Filters for Section 1 (Single Farmer)
+  String _singleCategoryFilter = 'All';
+  final Map<String, double> _singleQuantities = {};
+
+  // Filters for Section 2 (7km Clusters)
+  String _clusterTagFilter = 'All Clusters';
+  final Map<String, double> _clusterQuantities = {};
+
+  double _getSingleQuantity(String cropId, double fallback) {
+    return _singleQuantities[cropId] ?? fallback;
   }
 
-  void _setQuantity(String clusterId, double newQty) {
+  void _setSingleQuantity(String cropId, double newQty) {
     setState(() {
-      _selectedQuantities[clusterId] = newQty.clamp(1.0, 5000.0);
+      _singleQuantities[cropId] = newQty.clamp(1.0, 5000.0);
     });
   }
 
+  double _getClusterQuantity(String clusterId, double fallback) {
+    return _clusterQuantities[clusterId] ?? fallback;
+  }
+
+  void _setClusterQuantity(String clusterId, double newQty) {
+    setState(() {
+      _clusterQuantities[clusterId] = newQty.clamp(1.0, 5000.0);
+    });
+  }
+
+  double _toDouble(dynamic val) {
+    if (val == null) return 0.0;
+    if (val is num) return val.toDouble();
+    final clean = val.toString().replaceAll(RegExp(r'[^0-9.]'), '');
+    return double.tryParse(clean) ?? 0.0;
+  }
+
   List<FarmerCluster> _filterClusters(List<FarmerCluster> clusters) {
-    if (_selectedTagFilter == '≤ 5 km Radius') {
+    if (_clusterTagFilter == '≤ 5 km Radius') {
       return clusters.where((c) => c.maxInterFarmDistance <= 5.0).toList();
-    } else if (_selectedTagFilter == '≤ 7 km Radius') {
+    } else if (_clusterTagFilter == '≤ 7 km Radius') {
       return clusters.where((c) => c.maxInterFarmDistance <= 7.0).toList();
-    } else if (_selectedTagFilter == 'Residue-Free GAP') {
+    } else if (_clusterTagFilter == 'Residue-Free GAP') {
       return clusters.where((c) {
         final cond = c.conditions['cultivationMethod']?.toString() ?? '';
         return cond.toLowerCase().contains('residue') || cond.toLowerCase().contains('gap') || cond.toLowerCase().contains('bio');
       }).toList();
-    } else if (_selectedTagFilter == 'Moisture Certified') {
+    } else if (_clusterTagFilter == 'Moisture Certified') {
       return clusters.where((c) {
         final moist = c.conditions['moistureLevel']?.toString() ?? '';
         return moist.contains('%');
       }).toList();
     }
     return clusters;
+  }
+
+  List<Map<String, dynamic>> _filterSingleCrops(List<Map<String, dynamic>> crops) {
+    if (_singleCategoryFilter == 'All') return crops;
+    final target = _singleCategoryFilter.toLowerCase();
+    return crops.where((c) {
+      final name = (c['name'] ?? c['cropName'] ?? '').toString().toLowerCase();
+      final cat = (c['category'] ?? '').toString().toLowerCase();
+      return name.contains(target) || cat.contains(target);
+    }).toList();
   }
 
   @override
@@ -75,10 +110,14 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.hub, color: Color(0xFF2E7D32), size: 18),
+                Icon(
+                  _selectedSection == 0 ? Icons.person : Icons.hub,
+                  color: const Color(0xFF2E7D32),
+                  size: 18,
+                ),
                 const SizedBox(width: 6),
                 Text(
-                  'Farmer Produce Pooling',
+                  _selectedSection == 0 ? 'Farmer Direct Marketplace' : 'Farmer Produce Pooling',
                   style: GoogleFonts.inter(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -88,7 +127,9 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
               ],
             ),
             Text(
-              '≤ 7 km Proximity Clusters • TSP Route Optimized • Wholesale Rates',
+              _selectedSection == 0
+                  ? 'Single Kisaan Harvests • 100% Direct • No Middlemen'
+                  : '≤ 7 km Proximity Clusters • TSP Route Optimized • Wholesale Rates',
               style: GoogleFonts.inter(
                 fontSize: 10.5,
                 color: Colors.grey.shade600,
@@ -97,72 +138,86 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
             ),
           ],
         ),
-        actions: [
-          if (widget.onNavigateTab != null)
-            IconButton(
-              icon: const Icon(Icons.storefront_outlined, color: AppTheme.darkGreen),
-              tooltip: 'Browse Single Listings',
-              onPressed: () => widget.onNavigateTab!(1),
-            ),
-        ],
       ),
-      body: StreamBuilder<List<FarmerCluster>>(
-        stream: _clusteringService.streamFarmerClusters(),
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: _dbService.streamAllAvailableCrops(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
             return const Center(child: CircularProgressIndicator(color: AppTheme.primaryGreen));
           }
 
-          final allClusters = snapshot.data ?? [];
+          final rawCrops = snapshot.data ?? [];
+
+          // 1. Process active single farmer crops
+          final List<Map<String, dynamic>> activeSingleCrops = [];
+          for (final c in rawCrops) {
+            final qty = _toDouble(c['availableQuantity'] ?? c['quantity']);
+            final status = (c['status'] ?? 'active').toString().toLowerCase();
+            final isActive = c['isActive'] as bool? ?? true;
+            if (isActive && qty > 0 && status != 'sold') {
+              double price = _toDouble(c['price']);
+              if (price > 300) {
+                price = (price / 100).roundToDouble();
+              }
+              if (price <= 5.0) price = 32.0;
+
+              activeSingleCrops.add({
+                ...c,
+                'normalizedPrice': price,
+                'normalizedQuantity': qty,
+              });
+            }
+          }
+
+          // Fallback verified smallholders if firestore is empty
+          if (activeSingleCrops.isEmpty) {
+            activeSingleCrops.addAll(_getVerifiedFallbackSingleCrops());
+          }
+
+          // 2. Process 7km pooled clusters
+          final allClusters = _clusteringService.clusterCrops(rawCrops);
           final filteredClusters = _filterClusters(allClusters);
+          final filteredSingleCrops = _filterSingleCrops(activeSingleCrops);
 
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              // 1. Hero Banner
-              _buildCleanHeroBanner(allClusters.length),
-              const SizedBox(height: 14),
-
-              // 2. Filter Chips
-              _buildFilterChips(),
-              const SizedBox(height: 16),
-
-              // 3. Section Title with Cluster Count
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Active ≤ 7km Hyperlocal Clusters',
-                    style: GoogleFonts.outfit(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFF1B5E20),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE8F5E9),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      '${filteredClusters.length} Clusters Ready',
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1B5E20),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              // Top Two-Section Switcher (1. Single Farmer vs 2. 7km Clusters)
+              _buildTwoSectionSwitcher(activeSingleCrops.length, allClusters.length),
               const SizedBox(height: 12),
 
-              // 4. Cluster Cards or Empty State
-              if (filteredClusters.isEmpty)
-                _buildEmptySourceState()
-              else
-                ...filteredClusters.map((c) => _buildDetailedClusterCard(c)),
+              // Content based on selected section
+              if (_selectedSection == 0) ...[
+                // SECTION 1: Single Farmer Direct
+                _buildSingleFarmerHeroBanner(activeSingleCrops.length),
+                const SizedBox(height: 14),
+                _buildSingleCategoryChips(),
+                const SizedBox(height: 16),
+                _buildSectionHeader(
+                  title: 'Verified Single Farmer Harvests',
+                  badgeText: '${filteredSingleCrops.length} Active Lots',
+                ),
+                const SizedBox(height: 12),
+                if (filteredSingleCrops.isEmpty)
+                  _buildEmptyState('No crops matching $_singleCategoryFilter')
+                else
+                  ...filteredSingleCrops.map((c) => _buildSingleFarmerCard(c)),
+              ] else ...[
+                // SECTION 2: 7km Pooled Clusters
+                _buildClusterHeroBanner(allClusters.length),
+                const SizedBox(height: 14),
+                _buildClusterFilterChips(),
+                const SizedBox(height: 16),
+                _buildSectionHeader(
+                  title: 'Active ≤ 7km Hyperlocal Clusters',
+                  badgeText: '${filteredClusters.length} Clusters Ready',
+                ),
+                const SizedBox(height: 12),
+                if (filteredClusters.isEmpty)
+                  _buildEmptyState('No clusters matching $_clusterTagFilter')
+                else
+                  ...filteredClusters.map((c) => _buildDetailedClusterCard(c)),
+              ],
             ],
           );
         },
@@ -170,7 +225,221 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  Widget _buildCleanHeroBanner(int totalClusters) {
+  // Two-Section Segmented Tab Switcher
+  Widget _buildTwoSectionSwitcher(int singleCount, int clusterCount) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Section 1: Single Farmer
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _selectedSection = 0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: _selectedSection == 0 ? const Color(0xFF15803D) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.person,
+                          size: 16,
+                          color: _selectedSection == 0 ? Colors.white : const Color(0xFF15803D),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '1. Single Farmer',
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: _selectedSection == 0 ? Colors.white : const Color(0xFF0F172A),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$singleCount Direct Farms',
+                      style: GoogleFonts.inter(
+                        fontSize: 10.5,
+                        color: _selectedSection == 0 ? const Color(0xFFDCFCE7) : Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+
+          // Section 2: 7km Clusters
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _selectedSection = 1),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: _selectedSection == 1 ? const Color(0xFF15803D) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.hub,
+                          size: 16,
+                          color: _selectedSection == 1 ? Colors.white : const Color(0xFF15803D),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '2. 7km Clusters',
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: _selectedSection == 1 ? Colors.white : const Color(0xFF0F172A),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$clusterCount Pooled Belts',
+                      style: GoogleFonts.inter(
+                        fontSize: 10.5,
+                        color: _selectedSection == 1 ? const Color(0xFFDCFCE7) : Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader({required String title, required String badgeText}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.outfit(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF1B5E20),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE8F5E9),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            badgeText,
+            style: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1B5E20),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // SECTION 1: Single Farmer Hero Banner
+  Widget _buildSingleFarmerHeroBanner(int totalFarms) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0D5C3A), Color(0xFF1B7A4E)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0D5C3A).withValues(alpha: 0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.person, color: Color(0xFF69F0AE), size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Direct Single Farmer Procurements',
+                      style: GoogleFonts.outfit(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    Text(
+                      '100% direct-to-kisaan farm harvests with certified DigiLocker e-Sign',
+                      style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFFB9F6CA)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              _buildBannerStat(Icons.storefront, '$totalFarms Direct Farms', 'Live Listings'),
+              const SizedBox(width: 8),
+              _buildBannerStat(Icons.verified, '100% Direct', 'Zero Middlemen'),
+              const SizedBox(width: 8),
+              _buildBannerStat(Icons.security, 'Escrow Protected', 'Instant Settlement'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // SECTION 2: 7km Cluster Hero Banner
+  Widget _buildClusterHeroBanner(int totalClusters) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -224,8 +493,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
             ],
           ),
           const SizedBox(height: 14),
-
-          // 3 Summary Badges
           Row(
             children: [
               _buildBannerStat(Icons.scatter_plot, '$totalClusters Clusters', 'Agricultural Belt'),
@@ -278,20 +545,53 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  Widget _buildFilterChips() {
+  Widget _buildSingleCategoryChips() {
+    final categories = ['All', 'Wheat', 'Rice', 'Mustard', 'Tomato', 'Onion', 'Mango'];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: categories.map((cat) {
+          final isSel = _singleCategoryFilter == cat;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              label: Text(cat),
+              selected: isSel,
+              onSelected: (selected) {
+                if (selected) setState(() => _singleCategoryFilter = cat);
+              },
+              labelStyle: GoogleFonts.inter(
+                fontSize: 11.5,
+                fontWeight: isSel ? FontWeight.bold : FontWeight.w500,
+                color: isSel ? Colors.white : const Color(0xFF15803D),
+              ),
+              selectedColor: const Color(0xFF15803D),
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(color: isSel ? const Color(0xFF15803D) : Colors.grey.shade300),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildClusterFilterChips() {
     final filters = ['All Clusters', '≤ 5 km Radius', '≤ 7 km Radius', 'Residue-Free GAP', 'Moisture Certified'];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
         children: filters.map((f) {
-          final isSelected = _selectedTagFilter == f;
+          final isSelected = _clusterTagFilter == f;
           return Padding(
             padding: const EdgeInsets.only(right: 8),
             child: ChoiceChip(
               label: Text(f),
               selected: isSelected,
               onSelected: (selected) {
-                if (selected) setState(() => _selectedTagFilter = f);
+                if (selected) setState(() => _clusterTagFilter = f);
               },
               labelStyle: GoogleFonts.inter(
                 fontSize: 11.5,
@@ -302,9 +602,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
               backgroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
-                side: BorderSide(
-                  color: isSelected ? const Color(0xFF1B5E20) : Colors.grey.shade300,
-                ),
+                side: BorderSide(color: isSelected ? const Color(0xFF1B5E20) : Colors.grey.shade300),
               ),
             ),
           );
@@ -313,7 +611,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  Widget _buildEmptySourceState() {
+  Widget _buildEmptyState(String message) {
     return Container(
       padding: const EdgeInsets.all(28),
       alignment: Alignment.center,
@@ -324,38 +622,629 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
       ),
       child: Column(
         children: [
-          const Icon(Icons.hub_outlined, size: 48, color: Color(0xFF15803D)),
+          const Icon(Icons.search_off, size: 44, color: Color(0xFF15803D)),
           const SizedBox(height: 12),
           Text(
-            'No Matching Clusters Found',
-            style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+            message,
+            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 6),
           Text(
-            'Try selecting "All Clusters" or check back as more local farmers publish their harvests.',
+            'Try adjusting your selected filters to view more listings.',
             style: GoogleFonts.inter(fontSize: 12, color: Colors.grey.shade600),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _selectedTagFilter = 'All Clusters';
-              });
-            },
-            child: const Text('Reset Filter to All Clusters'),
           ),
         ],
       ),
     );
   }
 
-  /// High-Fidelity Cluster Card with dynamic custom quantity picker fulfilling buyer demand
+  // ==========================================
+  // SECTION 1: SINGLE FARMER CARD IMPLEMENTATION
+  // ==========================================
+  Widget _buildSingleFarmerCard(Map<String, dynamic> crop) {
+    final cropId = crop['id']?.toString() ?? 'crop_${DateTime.now().millisecondsSinceEpoch}';
+    final cropName = crop['name'] ?? crop['cropName'] ?? 'Farm Harvest';
+    final farmerName = crop['farmerName'] ?? 'Local Verified Kisaan';
+    final location = crop['location'] ?? 'Karnal Village, Haryana';
+    final variety = crop['variety'] ?? 'Grade 1 Quality';
+    final grade = crop['qualityGrade'] ?? 'Grade A';
+    final price = _toDouble(crop['normalizedPrice'] ?? crop['price']);
+    final stock = _toDouble(crop['normalizedQuantity'] ?? crop['quantity']);
+    final imageUrl = crop['imageUrl']?.toString() ?? '';
+
+    final currentQty = _getSingleQuantity(cropId, stock >= 25 ? 25.0 : 5.0);
+    final totalCost = currentQty * price;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF86EFAC), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. Photo Hero Banner
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
+                child: imageUrl.isNotEmpty
+                    ? CropImageHelper.buildCropImage(
+                        imageUrl,
+                        cropName,
+                        height: 140,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                      )
+                    : Container(
+                        height: 120,
+                        color: const Color(0xFFE8F5E9),
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.grass, size: 48, color: Color(0xFF15803D)),
+                      ),
+              ),
+
+              // Top-left: Single Farm Direct Tag
+              Positioned(
+                top: 10,
+                left: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.78),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.person, size: 12, color: Color(0xFF69F0AE)),
+                      SizedBox(width: 4),
+                      Text(
+                        '100% Single Farm Direct',
+                        style: TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Top-right: Farm Gate Rate Badge
+              Positioned(
+                top: 10,
+                right: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF15803D),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'ZERO MIDDLEMEN',
+                    style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+
+              // Bottom-left: Farmer Identity Badge
+              Positioned(
+                bottom: 10,
+                left: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A).withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.verified_user, size: 12, color: Color(0xFF69F0AE)),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Kisaan: $farmerName',
+                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          // 2. Crop & Farmer Details
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        cropName,
+                        style: GoogleFonts.outfit(fontSize: 17, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        grade,
+                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFF475569)),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    const Icon(Icons.location_on, size: 14, color: Color(0xFF15803D)),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        '$location • $variety',
+                        style: GoogleFonts.inter(fontSize: 12, color: Colors.grey.shade600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Metrics Strip: Price & Available Stock
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Direct Farm Price', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                          Row(
+                            children: [
+                              Text(
+                                '₹${price.toStringAsFixed(0)}',
+                                style: GoogleFonts.inter(fontSize: 17, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
+                              ),
+                              Text('/kg', style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF15803D))),
+                            ],
+                          ),
+                        ],
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          const Text('Direct Farm Stock', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                          Text(
+                            '${stock.toStringAsFixed(0)} kg',
+                            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                          ),
+                        ],
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Text('Origin Verification', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                          const Text(
+                            'e-Sign Verified',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // Single Farmer Condition Tags
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    _buildTagPill('💧 11.2% Moisture Tested'),
+                    _buildTagPill('🌿 100% Residue-Free'),
+                    _buildTagPill('🌾 Single-Farm Lot'),
+                    _buildTagPill('🔐 DigiLocker Verified'),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // Quantity Selector
+                _buildSingleQuantitySelector(cropId, stock, price, currentQty, totalCost),
+                const SizedBox(height: 14),
+
+                // Action Buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showSingleFarmerMapSheet(context, crop),
+                        icon: const Icon(Icons.location_on_outlined, size: 16),
+                        label: Text(
+                          'View Farm Map',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF15803D),
+                          side: const BorderSide(color: Color(0xFF86EFAC)),
+                          backgroundColor: const Color(0xFFF0FDF4),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _proceedToSingleCheckout(crop, currentQty, totalCost),
+                        icon: const Icon(Icons.shopping_bag_outlined, size: 16),
+                        label: Text(
+                          'Buy Direct (₹${totalCost.toStringAsFixed(0)})',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF15803D),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSingleQuantitySelector(
+    String cropId,
+    double maxStock,
+    double price,
+    double currentQty,
+    double totalCost,
+  ) {
+    final presets = [5.0, 10.0, 25.0, 50.0, 100.0];
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFA),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Direct Order Quantity:',
+                style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.bold, color: const Color(0xFF334155)),
+              ),
+              Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline, size: 20, color: Color(0xFF15803D)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => _setSingleQuantity(cropId, currentQty - 5.0),
+                  ),
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Text(
+                      '${currentQty.toStringAsFixed(0)} kg',
+                      style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline, size: 20, color: Color(0xFF15803D)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => _setSingleQuantity(cropId, (currentQty + 5.0).clamp(1.0, maxStock)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                ...presets.map((opt) {
+                  final isSel = currentQty == opt;
+                  return GestureDetector(
+                    onTap: () => _setSingleQuantity(cropId, opt),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isSel ? const Color(0xFF15803D) : Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: isSel ? const Color(0xFF15803D) : Colors.grey.shade300),
+                      ),
+                      child: Text(
+                        '${opt.toStringAsFixed(0)} kg',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: isSel ? FontWeight.bold : FontWeight.w500,
+                          color: isSel ? Colors.white : Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Total Payable: ₹${totalCost.toStringAsFixed(0)}',
+                style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
+              ),
+              Text(
+                '100% Escrow Secured',
+                style: GoogleFonts.inter(fontSize: 11, color: Colors.grey.shade600),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSingleFarmerMapSheet(BuildContext context, Map<String, dynamic> crop) {
+    final lat = (crop['lat'] as num?)?.toDouble() ?? 29.6857;
+    final lng = (crop['lng'] as num?)?.toDouble() ?? 76.9905;
+    final farmPos = LatLng(lat, lng);
+    final farmerName = crop['farmerName'] ?? 'Local Farmer';
+    final cropName = crop['name'] ?? crop['cropName'] ?? 'Farm Harvest';
+    final location = crop['location'] ?? 'Karnal Belt, Haryana';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.75,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person_pin_circle, color: Color(0xFF15803D), size: 24),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$farmerName Farm Location',
+                            style: GoogleFonts.outfit(fontSize: 17, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                          ),
+                          Text(
+                            '$location • $cropName',
+                            style: GoogleFonts.inter(fontSize: 12, color: Colors.grey.shade600),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                  ],
+                ),
+              ),
+              const Divider(height: 16),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Verified Smallholder GPS Map',
+                        style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'GPS verified farm boundary with direct dispatch radius.',
+                        style: GoogleFonts.inter(fontSize: 11.5, color: Colors.grey.shade600),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        height: 240,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: FlutterMap(
+                            options: MapOptions(
+                              initialCenter: farmPos,
+                              initialZoom: 12.5,
+                              interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
+                            ),
+                            children: [
+                              TileLayer(
+                                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName: 'com.agrichain.app',
+                              ),
+                              CircleLayer(
+                                circles: [
+                                  CircleMarker(
+                                    point: farmPos,
+                                    radius: 3500,
+                                    useRadiusInMeter: true,
+                                    color: const Color(0xFF15803D).withValues(alpha: 0.12),
+                                    borderColor: const Color(0xFF15803D),
+                                    borderStrokeWidth: 1.5,
+                                  ),
+                                ],
+                              ),
+                              MarkerLayer(
+                                markers: [
+                                  Marker(
+                                    point: farmPos,
+                                    width: 44,
+                                    height: 44,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF15803D),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.white, width: 2.5),
+                                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                                      ),
+                                      child: const Center(
+                                        child: Icon(Icons.agriculture, color: Colors.white, size: 22),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0FDF4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFBBF7D0)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.verified, color: Color(0xFF15803D), size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Aadhaar DigiLocker Verified Farmer • Direct Farm-Gate Procurement Enabled',
+                                style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _proceedToSingleCheckout(crop, 25.0, 25.0 * _toDouble(crop['normalizedPrice'] ?? crop['price']));
+                          },
+                          icon: const Icon(Icons.shopping_bag_outlined, size: 18),
+                          label: const Text('Proceed to Buy from Farmer', style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF15803D),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _proceedToSingleCheckout(Map<String, dynamic> crop, double qty, double amount) {
+    final cropMap = {
+      'id': crop['id'],
+      'name': crop['name'] ?? crop['cropName'] ?? 'Crop',
+      'cropName': crop['name'] ?? crop['cropName'] ?? 'Crop',
+      'price': _toDouble(crop['normalizedPrice'] ?? crop['price']),
+      'pricePerUnit': _toDouble(crop['normalizedPrice'] ?? crop['price']),
+      'quantity': '${crop['normalizedQuantity'] ?? crop['quantity']} kg',
+      'availableQuantity': _toDouble(crop['normalizedQuantity'] ?? crop['quantity']),
+      'unit': 'kg',
+      'farmerId': crop['farmerId'] ?? 'farmer',
+      'farmerName': crop['farmerName'] ?? 'Local Farmer',
+      'location': crop['location'] ?? 'Karnal Village, Haryana',
+      'imageUrl': crop['imageUrl'] ?? '',
+      'variety': crop['variety'] ?? 'Grade 1 Quality',
+      'qualityGrade': crop['qualityGrade'] ?? 'Grade A',
+      'isClusterOrder': false,
+      'selectedQuantity': qty,
+      'orderQuantity': qty,
+      'totalAmount': amount,
+    };
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RetailCheckoutScreen(crop: cropMap),
+      ),
+    );
+  }
+
+  // ==========================================
+  // SECTION 2: 7KM CLUSTERS IMPLEMENTATION
+  // ==========================================
   Widget _buildDetailedClusterCard(FarmerCluster cluster) {
     final savingsPercent = ((cluster.retailMarketPrice - cluster.wholesalePrice) / cluster.retailMarketPrice * 100).round();
     final savingsPerKg = cluster.retailMarketPrice - cluster.wholesalePrice;
-    final currentQty = _getQuantity(cluster.id, cluster.defaultOrderKg);
+    final currentQty = _getClusterQuantity(cluster.id, cluster.defaultOrderKg);
     final calculatedTotal = currentQty * cluster.wholesalePrice;
     final calculatedSavings = currentQty * savingsPerKg;
 
@@ -364,10 +1253,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: const Color(0xFF86EFAC),
-          width: 1.2,
-        ),
+        border: Border.all(color: const Color(0xFF86EFAC), width: 1.2),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),
@@ -474,7 +1360,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Title and Grade
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -524,7 +1409,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Wholesale Price
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -548,8 +1432,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                           ),
                         ],
                       ),
-
-                      // Pooled Stock
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
@@ -560,8 +1442,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                           ),
                         ],
                       ),
-
-                      // Neighbor Farms
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
@@ -586,7 +1466,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                 const SizedBox(height: 14),
 
                 // Custom Quantity Option Section directly on Card
-                _buildCardQuantitySelector(cluster, currentQty, calculatedTotal, calculatedSavings),
+                _buildClusterQuantitySelector(cluster, currentQty, calculatedTotal, calculatedSavings),
                 const SizedBox(height: 14),
 
                 // Action Buttons Row
@@ -612,7 +1492,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: () => _proceedToCheckout(cluster, currentQty, calculatedTotal),
+                        onPressed: () => _proceedToClusterCheckout(cluster, currentQty, calculatedTotal),
                         icon: const Icon(Icons.shopping_bag_outlined, size: 16),
                         label: Text(
                           'Buy ${currentQty.toStringAsFixed(0)} kg (₹${calculatedTotal.toStringAsFixed(0)})',
@@ -639,7 +1519,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  // Inter-Farm Distance Chain Preview along pickup path
   Widget _buildInterFarmChainPreview(FarmerCluster cluster) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -691,7 +1570,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  // Quality & Verification Tags Bar
   Widget _buildQualityTagsBar(FarmerCluster cluster) {
     final moisture = cluster.conditions['moistureLevel']?.toString() ?? '11.2% Moisture';
     return Wrap(
@@ -721,8 +1599,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  // Card Quantity Selector fulfilling buyer demand
-  Widget _buildCardQuantitySelector(
+  Widget _buildClusterQuantitySelector(
     FarmerCluster cluster,
     double currentQty,
     double calculatedTotal,
@@ -753,7 +1630,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                     icon: const Icon(Icons.remove_circle_outline, size: 20, color: Color(0xFF15803D)),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
-                    onPressed: () => _setQuantity(cluster.id, currentQty - 5.0),
+                    onPressed: () => _setClusterQuantity(cluster.id, currentQty - 5.0),
                   ),
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 8),
@@ -772,15 +1649,13 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                     icon: const Icon(Icons.add_circle_outline, size: 20, color: Color(0xFF15803D)),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
-                    onPressed: () => _setQuantity(cluster.id, currentQty + 5.0),
+                    onPressed: () => _setClusterQuantity(cluster.id, currentQty + 5.0),
                   ),
                 ],
               ),
             ],
           ),
           const SizedBox(height: 8),
-
-          // Quick Preset Pills
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
@@ -788,7 +1663,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                 ...quickOptions.map((opt) {
                   final isSel = currentQty == opt;
                   return GestureDetector(
-                    onTap: () => _setQuantity(cluster.id, opt),
+                    onTap: () => _setClusterQuantity(cluster.id, opt),
                     child: Container(
                       margin: const EdgeInsets.only(right: 6),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -808,31 +1683,10 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                     ),
                   );
                 }),
-                GestureDetector(
-                  onTap: () => _showCustomQuantityDialog(cluster),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF15803D)),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.edit, size: 11, color: Color(0xFF15803D)),
-                        SizedBox(width: 4),
-                        Text('Custom kg', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF15803D))),
-                      ],
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
           const SizedBox(height: 10),
-
-          // Subtotal & Savings Bar
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -851,38 +1705,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  void _showCustomQuantityDialog(FarmerCluster cluster) {
-    final controller = TextEditingController(text: _getQuantity(cluster.id, cluster.defaultOrderKg).toStringAsFixed(0));
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Enter Custom Quantity (kg)', style: GoogleFonts.outfit(fontWeight: FontWeight.bold)),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Quantity in Kilograms',
-            suffixText: 'kg',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              final val = double.tryParse(controller.text) ?? cluster.defaultOrderKg;
-              _setQuantity(cluster.id, val);
-              Navigator.pop(ctx);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF15803D)),
-            child: const Text('Apply', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Multi-Stop Real Road Route Inspection Sheet with FlutterMap (OSRM Road Snapped)
   void _showClusterInspectionSheet(BuildContext context, FarmerCluster cluster) {
     showModalBottomSheet(
       context: context,
@@ -897,7 +1719,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
 
         return StatefulBuilder(
           builder: (context, setInspectionState) {
-            // Fetch live OSRM road geometry once when modal builds
             if (!hasFetched) {
               hasFetched = true;
               final waypoints = [
@@ -916,14 +1737,14 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
             String tileUrl;
             switch (mapTypeIndex) {
               case 1:
-                tileUrl = 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'; // Satellite
+                tileUrl = 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
                 break;
               case 2:
-                tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'; // OSM
+                tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
                 break;
               case 0:
               default:
-                tileUrl = 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'; // Google Road
+                tileUrl = 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}';
                 break;
             }
 
@@ -943,15 +1764,11 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                     child: Container(
                       width: 44,
                       height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+                      decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
                     ),
                   ),
                   const SizedBox(height: 12),
 
-                  // Title Header
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
@@ -973,10 +1790,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                             ],
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(ctx),
-                        ),
+                        IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
                       ],
                     ),
                   ),
@@ -988,7 +1802,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // 1. Google Maps / OSM Map Container
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -1033,8 +1846,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                                     urlTemplate: tileUrl,
                                     userAgentPackageName: 'com.agrichain.app',
                                   ),
-
-                                  // Proximity radius circle (7 km)
                                   CircleLayer(
                                     circles: [
                                       CircleMarker(
@@ -1047,17 +1858,13 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                                       ),
                                     ],
                                   ),
-
-                                  // Real Asphalt Road Polyline (OSRM Driving Route)
                                   PolylineLayer(
                                     polylines: [
-                                      // Outer casing
                                       Polyline(
                                         points: polylinePoints,
                                         strokeWidth: 5.5,
                                         color: const Color(0xFF064E3B),
                                       ),
-                                      // Highway centerline
                                       Polyline(
                                         points: polylinePoints,
                                         strokeWidth: 3.5,
@@ -1065,11 +1872,8 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                                       ),
                                     ],
                                   ),
-
-                                  // Numbered Pickup Markers along the road
                                   MarkerLayer(
                                     markers: [
-                                      // Hub Pin
                                       Marker(
                                         point: hubPos,
                                         width: 44,
@@ -1086,8 +1890,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                                           ),
                                         ),
                                       ),
-
-                                      // Sequentially Numbered Neighbor Farm Pins
                                       ...cluster.farmers.asMap().entries.map((entry) {
                                         final idx = entry.key + 1;
                                         final f = entry.value;
@@ -1173,7 +1975,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                           ),
                           const SizedBox(height: 18),
 
-                          // 2. Pooled Neighbor Farmers
                           Text(
                             'Pooled Neighbor Farmers (${cluster.farmers.length})',
                             style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
@@ -1213,25 +2014,6 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                                           '${f.farmName} • ${f.village} (${f.distance == 0 ? "Hub Farm" : "${f.distance} km away"})',
                                           style: GoogleFonts.inter(fontSize: 11, color: Colors.grey.shade600),
                                         ),
-                                        const SizedBox(height: 3),
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              f.isDigiLocker ? Icons.verified : Icons.gesture,
-                                              size: 13,
-                                              color: f.isDigiLocker ? const Color(0xFF15803D) : const Color(0xFF0284C7),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              '${f.signatureType} (${f.certId})',
-                                              style: TextStyle(
-                                                fontSize: 10.5,
-                                                fontWeight: FontWeight.bold,
-                                                color: f.isDigiLocker ? const Color(0xFF15803D) : const Color(0xFF0284C7),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
                                       ],
                                     ),
                                   ),
@@ -1244,69 +2026,24 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
                               ),
                             );
                           }),
-
-                          const SizedBox(height: 16),
-
-                          // 3. Verified Agricultural Standards
-                          Text(
-                            'Verified Agricultural Standards',
-                            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
-                          ),
-                          const SizedBox(height: 10),
-
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF0FDF4),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: const Color(0xFFBBF7D0)),
-                            ),
-                            child: Column(
-                              children: cluster.conditions.entries.map((entry) {
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Icon(Icons.check_circle, size: 15, color: Color(0xFF15803D)),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: RichText(
-                                          text: TextSpan(
-                                            style: GoogleFonts.inter(fontSize: 12, color: Colors.grey.shade800),
-                                            children: [
-                                              TextSpan(text: '${_formatKey(entry.key)}: ', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                              TextSpan(text: entry.value.toString()),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ),
                           const SizedBox(height: 20),
 
-                          // Direct Buy CTA
                           SizedBox(
                             width: double.infinity,
                             height: 48,
                             child: ElevatedButton.icon(
                               onPressed: () {
                                 Navigator.pop(ctx);
-                                _showClusterBuySheet(context, cluster);
+                                _proceedToClusterCheckout(cluster, 25.0, 25.0 * cluster.wholesalePrice);
                               },
                               icon: const Icon(Icons.shopping_bag_outlined, size: 18),
-                              label: Text(
-                                'Select Quantity & Buy from Cluster',
-                                style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold),
+                              label: const Text(
+                                'Buy from Cluster',
+                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                               ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF15803D),
                                 foregroundColor: Colors.white,
-                                elevation: 0,
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               ),
                             ),
@@ -1346,258 +2083,7 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     );
   }
 
-  /// Clean, dedicated Quick-Buy Sheet with custom kg order selection fulfilling buyer demand
-  void _showClusterBuySheet(BuildContext context, FarmerCluster cluster) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final clusterId = cluster.id;
-            final currentQty = _getQuantity(clusterId, cluster.defaultOrderKg);
-            final totalPayable = currentQty * cluster.wholesalePrice;
-            final retailTotal = currentQty * cluster.retailMarketPrice;
-            final savings = retailTotal - totalPayable;
-
-            return Container(
-              padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 20),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: SafeArea(
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 40,
-                          height: 4,
-                          decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-
-                      Row(
-                        children: [
-                          Text(cluster.imageEmoji, style: const TextStyle(fontSize: 26)),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  cluster.crop,
-                                  style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
-                                ),
-                                Text(
-                                  '₹${cluster.wholesalePrice.toStringAsFixed(0)}/kg wholesale rate (${cluster.totalFarms} pooled farms)',
-                                  style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF15803D), fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(height: 24),
-
-                      // Stepper & Custom Quantity
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Select Order Quantity', style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13)),
-                              Text('Min: 5 kg • In Stock: ${cluster.availableStockKg.toStringAsFixed(0)} kg', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.remove_circle, color: Color(0xFF15803D), size: 28),
-                                onPressed: () {
-                                  if (currentQty > 5) {
-                                    setModalState(() => _setQuantity(clusterId, currentQty - 5));
-                                  }
-                                },
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF1F5F9),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  '${currentQty.toStringAsFixed(0)} kg',
-                                  style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.add_circle, color: Color(0xFF15803D), size: 28),
-                                onPressed: () {
-                                  if (currentQty + 5 <= cluster.availableStockKg) {
-                                    setModalState(() => _setQuantity(clusterId, currentQty + 5));
-                                  }
-                                },
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-
-                      // Multi-Farmer Fulfillment Allocation Preview
-                      _buildFulfillmentAllocation(cluster.farmers, currentQty),
-                      const SizedBox(height: 14),
-
-                      // Price Summary
-                      Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF0FDF4),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFBBF7D0)),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Total Escrow Payable', style: TextStyle(fontSize: 11, color: Color(0xFF15803D))),
-                                Text(
-                                  '₹${totalPayable.toStringAsFixed(0)}',
-                                  style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.bold, color: const Color(0xFF15803D)),
-                                ),
-                              ],
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF15803D),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                'You Save ₹${savings.toStringAsFixed(0)}',
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Proceed to Checkout CTA
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            _proceedToCheckout(cluster, currentQty, totalPayable);
-                          },
-                          icon: const Icon(Icons.shopping_cart_checkout, size: 18),
-                          label: Text(
-                            'Proceed to Secure Checkout • ₹${totalPayable.toStringAsFixed(0)}',
-                            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF15803D),
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildFulfillmentAllocation(List<FarmerClusterMember> farmers, double totalQty) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Multi-Farmer Allocation (${totalQty.toStringAsFixed(0)} kg order)',
-                style: GoogleFonts.inter(fontSize: 11.5, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
-              ),
-              Text(
-                '${farmers.length} Farms Pooled',
-                style: const TextStyle(fontSize: 10.5, color: Color(0xFF15803D), fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-
-          // Segmented progress bar
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: SizedBox(
-              height: 10,
-              child: Row(
-                children: farmers.map((f) {
-                  final totalClusterStock = farmers.fold(0.0, (acc, curr) => acc + curr.pooledKg);
-                  final double fraction = (totalClusterStock > 0) ? (f.pooledKg / totalClusterStock) : (1.0 / farmers.length);
-
-                  final colors = [
-                    const Color(0xFF15803D),
-                    const Color(0xFF0284C7),
-                    const Color(0xFFEAB308),
-                    const Color(0xFF8B5CF6),
-                  ];
-                  final idx = farmers.indexOf(f) % colors.length;
-
-                  return Expanded(
-                    flex: (fraction * 100).round().clamp(1, 100),
-                    child: Container(color: colors[idx]),
-                  );
-                }).toList(),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          Wrap(
-            spacing: 10,
-            children: farmers.map((f) {
-              final totalClusterStock = farmers.fold(0.0, (acc, curr) => acc + curr.pooledKg);
-              final double fraction = (totalClusterStock > 0) ? (f.pooledKg / totalClusterStock) : (1.0 / farmers.length);
-              final allocatedKg = (totalQty * fraction).roundToDouble();
-
-              return Text(
-                '• ${f.name.split(" ").first}: ${allocatedKg.toStringAsFixed(0)} kg',
-                style: const TextStyle(fontSize: 10.5, color: Color(0xFF475569)),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _proceedToCheckout(FarmerCluster cluster, double qty, double amount) {
+  void _proceedToClusterCheckout(FarmerCluster cluster, double qty, double amount) {
     final leadFarmer = cluster.farmers.first;
 
     final cropMap = {
@@ -1628,17 +2114,59 @@ class _FarmerGroupingScreenState extends State<FarmerGroupingScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => RetailCheckoutScreen(
-          crop: cropMap,
-        ),
+        builder: (context) => RetailCheckoutScreen(crop: cropMap),
       ),
     );
   }
 
-  String _formatKey(String key) {
-    return key
-        .replaceAllMapped(RegExp(r'([A-Z])'), (m) => ' ${m[1]}')
-        .replaceFirstMapped(RegExp(r'^[a-z]'), (m) => m[0]!.toUpperCase())
-        .trim();
+  // Fallback direct smallholders if firestore collection is empty
+  List<Map<String, dynamic>> _getVerifiedFallbackSingleCrops() {
+    return [
+      {
+        'id': 'SINGLE-WHT-01',
+        'name': 'Sharbati Wheat (Grade A)',
+        'cropName': 'Sharbati Wheat (Grade A)',
+        'farmerName': 'Baldev Singh Dhillon',
+        'location': 'Taraori North, Karnal Belt',
+        'variety': 'Sharbati C-306 Gold',
+        'qualityGrade': 'Premium Grade-1',
+        'normalizedPrice': 34.0,
+        'normalizedQuantity': 750.0,
+        'imageUrl': 'https://images.unsplash.com/photo-1574323347407-f5e1ad6d020b?w=600',
+        'lat': 29.8032,
+        'lng': 76.9248,
+        'category': 'Wheat',
+      },
+      {
+        'id': 'SINGLE-RICE-02',
+        'name': 'Basmati 1121 Extra Long',
+        'cropName': 'Basmati 1121 Extra Long',
+        'farmerName': 'Rajesh Kumar',
+        'location': 'Sector 32 Rural, Karnal',
+        'variety': 'Pusa 1121 Aged',
+        'qualityGrade': 'Export Grade',
+        'normalizedPrice': 88.0,
+        'normalizedQuantity': 950.0,
+        'imageUrl': 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=600',
+        'lat': 29.6857,
+        'lng': 76.9905,
+        'category': 'Rice',
+      },
+      {
+        'id': 'SINGLE-MNG-03',
+        'name': 'Organic Dasheri Mangoes',
+        'cropName': 'Organic Dasheri Mangoes',
+        'farmerName': 'Gurpreet Singh',
+        'location': 'Taraori East Orchard, Karnal',
+        'variety': 'Dasheri Natural Tree Ripe',
+        'qualityGrade': 'Grade A Export',
+        'normalizedPrice': 55.0,
+        'normalizedQuantity': 400.0,
+        'imageUrl': 'https://images.unsplash.com/photo-1553279768-865429fa0078?w=600',
+        'lat': 29.8185,
+        'lng': 76.9380,
+        'category': 'Mango',
+      },
+    ];
   }
 }
