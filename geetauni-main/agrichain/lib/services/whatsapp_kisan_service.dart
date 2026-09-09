@@ -90,6 +90,14 @@ class WhatsAppKisanService {
     }
   }
 
+  /// Launches WhatsApp to ask the AI bot where the highest orders will come from next
+  Future<bool> launchDemandForecastInquiry({String? crop}) async {
+    final query = crop != null && crop.isNotEmpty
+        ? 'अगला सबसे ज्यादा $crop का ऑर्डर कहाँ से आएगा? Forecast highest orders for $crop.'
+        : 'अगला सबसे ज्यादा ऑर्डर कहाँ से आएगा? Predict where the highest orders will come next.';
+    return launchTradeChat(prefillText: query);
+  }
+
   /// Check whether the farmer has already linked their WhatsApp in Firestore
   Stream<bool> isWhatsAppLinkedStream(String userId) {
     if (userId.isEmpty) return Stream.value(false);
