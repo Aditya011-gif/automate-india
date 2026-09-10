@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/firestore_models.dart';
 import '../providers/app_state.dart';
 import '../services/digilocker_service.dart';
@@ -24,25 +25,12 @@ class DigilockerWebviewModal extends StatefulWidget {
 
 class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
   bool _isLoading = true;
+  String? _errorMessage;
   DigilockerSessionResponse? _session;
   DigilockerProfile? _verifiedProfile;
-
-  // Authentication Flow Steps:
-  // 0 = Enter Mobile/Aadhaar
-  // 1 = Enter 6-digit OTP
-  // 2 = Verified Citizen eKYC Profile & Role Choice
-  int _currentStep = 0;
-  int _selectedTab = 0; // 0: Aadhaar/Mobile, 1: Username, 2: Others
-
-  final TextEditingController _identifierController =
-      TextEditingController(text: '98765 43210');
-  final TextEditingController _otpController =
-      TextEditingController(text: '782190');
-
-  bool _consentChecked = true;
-  bool _isProcessingOtp = false;
-  int _resendCountdown = 45;
-  Timer? _countdownTimer;
+  String _liveStatus = 'created';
+  bool _isCheckingStatus = false;
+  Timer? _pollingTimer;
 
   @override
   void initState() {
@@ -52,87 +40,98 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
 
   @override
   void dispose() {
-    _countdownTimer?.cancel();
-    _identifierController.dispose();
-    _otpController.dispose();
+    _pollingTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _startSession() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
     final session = await DigilockerService.initiateSession();
-    if (mounted) {
+    if (!mounted) return;
+
+    if (session != null) {
       setState(() {
         _session = session;
         _isLoading = false;
+        _liveStatus = 'created';
       });
-    }
-  }
-
-  void _sendOtp() {
-    if (_identifierController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid Mobile or Aadhaar number')),
-      );
-      return;
-    }
-
-    setState(() {
-      _currentStep = 1;
-      _resendCountdown = 45;
-    });
-
-    _countdownTimer?.cancel();
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) return;
-      if (_resendCountdown > 0) {
-        setState(() => _resendCountdown--);
-      } else {
-        timer.cancel();
-      }
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: const Color(0xFF0284C7),
-        duration: const Duration(seconds: 4),
-        content: Row(
-          children: [
-            const Icon(Icons.sms, color: Colors.white, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'MeriPehchaan OTP sent! Test OTP: 782190 (auto-filled)',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: Colors.white),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _verifyOtpAndGrantConsent() async {
-    if (_otpController.text.trim().length < 4) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter the 6-digit OTP received')),
-      );
-      return;
-    }
-
-    setState(() => _isProcessingOtp = true);
-    await Future.delayed(const Duration(milliseconds: 950));
-
-    final profile = await DigilockerService.fetchAadhaarDocument(
-      _session?.sessionId ?? 'sandbox_dl_active',
-    );
-
-    if (mounted) {
+      _startStatusPolling();
+    } else {
       setState(() {
-        _verifiedProfile = profile;
-        _currentStep = 2;
-        _isProcessingOtp = false;
+        _isLoading = false;
+        _errorMessage = 'Could not connect to Sandbox.co.in gateway. Check network or proxy.';
       });
+    }
+  }
+
+  void _startStatusPolling() {
+    _pollingTimer?.cancel();
+    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      if (_session == null || _verifiedProfile != null) {
+        timer.cancel();
+        return;
+      }
+      await _checkStatus(silent: true);
+    });
+  }
+
+  Future<void> _launchAuthUrl() async {
+    if (_session == null) return;
+    final uri = Uri.parse(_session!.authorizationUrl);
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open external browser for DigiLocker.')),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error launching URL: $e');
+    }
+  }
+
+  Future<void> _checkStatus({bool silent = false}) async {
+    if (_session == null) return;
+    if (!silent) {
+      setState(() => _isCheckingStatus = true);
+    }
+
+    try {
+      final status = await DigilockerService.checkSessionStatus(_session!.sessionId);
+      if (!mounted) return;
+
+      setState(() => _liveStatus = status);
+
+      if (status == 'succeeded' || status == 'completed') {
+        _pollingTimer?.cancel();
+        final profile = await DigilockerService.fetchAadhaarDocument(_session!.sessionId);
+        if (mounted && profile != null) {
+          setState(() {
+            _verifiedProfile = profile;
+            _isCheckingStatus = false;
+          });
+        }
+      } else {
+        if (!silent && mounted) {
+          setState(() => _isCheckingStatus = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Live Status: $status. Please complete verification in the opened DigiLocker tab.'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (!silent && mounted) {
+        setState(() => _isCheckingStatus = false);
+      }
     }
   }
 
@@ -151,7 +150,7 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Signed in via DigiLocker: ${_verifiedProfile!.fullName}',
+                'Signed in via Real DigiLocker: ${_verifiedProfile!.fullName}',
                 style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
               ),
             ),
@@ -184,10 +183,10 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
             ),
           ),
 
-          // Official Government MeriPehchaan Header
+          // Official Government Header
           _buildOfficialHeader(),
 
-          // Body Content based on Step
+          // Body
           Expanded(
             child: _isLoading
                 ? const Center(
@@ -196,22 +195,38 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
                       children: [
                         CircularProgressIndicator(color: Color(0xFF0284C7)),
                         SizedBox(height: 16),
-                        Text('Connecting to MeriPehchaan National Gateway...'),
+                        Text('Connecting to Official Sandbox.co.in Gateway...'),
                       ],
                     ),
                   )
-                : _currentStep == 2 && _verifiedProfile != null
-                    ? _buildVerifiedProfileView()
-                    : _currentStep == 1
-                        ? _buildOtpVerificationStep()
-                        : _buildCredentialsInputStep(),
+                : _errorMessage != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                              const SizedBox(height: 12),
+                              Text(_errorMessage!, textAlign: TextAlign.center),
+                              const SizedBox(height: 16),
+                              ElevatedButton(
+                                onPressed: _startSession,
+                                child: const Text('Retry Connection'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : _verifiedProfile != null
+                        ? _buildVerifiedProfileView()
+                        : _buildLivePortalGatewayView(),
           ),
         ],
       ),
     );
   }
 
-  /// Header with National Emblem, MeriPehchaan branding & Government logos
   Widget _buildOfficialHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -221,7 +236,6 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
       ),
       child: Row(
         children: [
-          // Government National Emblem icon
           Container(
             width: 44,
             height: 44,
@@ -261,22 +275,22 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0284C7).withValues(alpha: 0.1),
+                        color: const Color(0xFF15803D).withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: const Text(
-                        'NSSO SSO',
+                        'LIVE NSSO',
                         style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF0284C7),
+                          color: Color(0xFF15803D),
                         ),
                       ),
                     ),
                   ],
                 ),
                 Text(
-                  'SINGLE SIGN-ON SERVICE • DigiLocker • e-Pramaan',
+                  'GOVERNMENT OF INDIA • DigiLocker e-KYC Verification',
                   style: GoogleFonts.inter(
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
@@ -296,141 +310,15 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
     );
   }
 
-  /// Step 0: Mobile / Aadhaar Number Entry
-  Widget _buildCredentialsInputStep() {
+  Widget _buildLivePortalGatewayView() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Government Auth Method Tabs
+          // Informational Alert
           Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                _buildTabItem(0, '📱 Mobile / Aadhaar'),
-                _buildTabItem(1, '👤 Username'),
-                _buildTabItem(2, '🆔 Others'),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          Text(
-            'Sign In to your account via MeriPehchaan',
-            style: GoogleFonts.outfit(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: const Color(0xFF0F172A),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Authenticate directly using your linked Mobile number or 12-digit Aadhaar.',
-            style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF64748B)),
-          ),
-          const SizedBox(height: 20),
-
-          // Identifier Input
-          Text(
-            'Mobile Number / Aadhaar Number',
-            style: GoogleFonts.inter(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF334155),
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _identifierController,
-            keyboardType: TextInputType.phone,
-            decoration: InputDecoration(
-              prefixIcon: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-                child: Text(
-                  '+91',
-                  style: GoogleFonts.inter(
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF0F172A),
-                  ),
-                ),
-              ),
-              hintText: 'Enter 10-digit mobile or 12-digit Aadhaar',
-              filled: true,
-              fillColor: const Color(0xFFF8FAFC),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFF0284C7), width: 2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Consent Checkbox
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 24,
-                height: 24,
-                child: Checkbox(
-                  value: _consentChecked,
-                  activeColor: const Color(0xFF15803D),
-                  onChanged: (val) => setState(() => _consentChecked = val ?? true),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'I consent to MeriPehchaan / DigiLocker terms and authorize sharing my verified Aadhaar KYC details with AgriChain for digital trade contracts.',
-                  style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF475569)),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Primary Button: Generate OTP
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: _consentChecked ? _sendOtp : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0284C7),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.lock_outline, size: 18),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Generate OTP',
-                    style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Fast-Track Sandbox Callout
-          Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: const Color(0xFFF0FDF4),
               borderRadius: BorderRadius.circular(12),
@@ -438,27 +326,162 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.bolt, color: Color(0xFF15803D), size: 22),
-                const SizedBox(width: 10),
+                const Icon(Icons.verified_user, color: Color(0xFF15803D), size: 28),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Government Sandbox Environment Active',
+                        'Real Government DigiLocker Verification',
                         style: GoogleFonts.inter(
-                          fontSize: 11.5,
+                          fontSize: 13,
                           fontWeight: FontWeight.bold,
                           color: const Color(0xFF166534),
                         ),
                       ),
+                      const SizedBox(height: 3),
                       Text(
-                        'Pre-configured test citizen (Ramesh Singh Sandhu, Karnal, Haryana).',
-                        style: GoogleFonts.inter(fontSize: 10.5, color: const Color(0xFF14532D)),
+                        'You will be redirected to the official MeriPehchaan (digilocker.meripehchaan.gov.in) portal to authenticate with your actual Aadhaar or Mobile OTP. Once approved, your real verified profile will automatically sync here.',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          color: const Color(0xFF14532D),
+                        ),
                       ),
                     ],
                   ),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Session Details Card
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: _liveStatus == 'succeeded'
+                                ? const Color(0xFF22C55E)
+                                : const Color(0xFFF59E0B),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Live Sandbox Session: $_liveStatus',
+                          style: GoogleFonts.inter(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF0F172A),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0284C7)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Session ID: ${_session?.sessionId ?? ""}',
+                  style: GoogleFonts.robotoMono(fontSize: 11, color: const Color(0xFF64748B)),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Registered Sandbox Client: IW55C7A3B0',
+                  style: GoogleFonts.robotoMono(fontSize: 11, color: const Color(0xFF0284C7)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Primary Button: Open Official Government Portal
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton.icon(
+              onPressed: _launchAuthUrl,
+              icon: const Icon(Icons.open_in_browser, color: Colors.white, size: 22),
+              label: Text(
+                '🌐 Open Official DigiLocker Portal',
+                style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0284C7),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Check Status Button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: OutlinedButton.icon(
+              onPressed: _isCheckingStatus ? null : () => _checkStatus(silent: false),
+              icon: _isCheckingStatus
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh, size: 20),
+              label: Text(
+                _isCheckingStatus ? 'Checking Verification Status...' : '🔄 Check Verification Status',
+                style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF0F172A),
+                side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.5),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Instructions Steps Card
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'How Real DigiLocker Verification Works:',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF334155),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _buildInstructionRow('1', 'Tap "Open Official DigiLocker Portal" above to open the government website.'),
+                _buildInstructionRow('2', 'Enter your actual Mobile number or 12-digit Aadhaar number.'),
+                _buildInstructionRow('3', 'Enter the real 6-digit OTP received from UIDAI on your phone.'),
+                _buildInstructionRow('4', 'Click "Allow" on DigiLocker to grant consent.'),
+                _buildInstructionRow('5', 'This screen automatically receives the webhook and pulls your official Aadhaar KYC record!'),
               ],
             ),
           ),
@@ -467,176 +490,38 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
     );
   }
 
-  /// Step 1: OTP Entry & Verification
-  Widget _buildOtpVerificationStep() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
+  Widget _buildInstructionRow(String step, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back, size: 20, color: Color(0xFF334155)),
-                onPressed: () => setState(() => _currentStep = 0),
+          Container(
+            width: 18,
+            height: 18,
+            margin: const EdgeInsets.only(top: 1, right: 8),
+            decoration: const BoxDecoration(
+              color: Color(0xFF0284C7),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                step,
+                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(width: 4),
-              Text(
-                'Enter OTP Verification Code',
-                style: GoogleFonts.outfit(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: const Color(0xFF0F172A),
-                ),
-              ),
-            ],
+            ),
           ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+          Expanded(
             child: Text(
-              'A 6-digit OTP has been dispatched to your mobile linked to Aadhaar (ending in ...6743).',
-              style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF64748B)),
+              text,
+              style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF475569)),
             ),
-          ),
-          const SizedBox(height: 24),
-
-          // OTP Field
-          Center(
-            child: SizedBox(
-              width: 260,
-              child: TextField(
-                controller: _otpController,
-                textAlign: TextAlign.center,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                style: GoogleFonts.robotoMono(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 10,
-                  color: const Color(0xFF0F172A),
-                ),
-                decoration: InputDecoration(
-                  counterText: '',
-                  hintText: '••••••',
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFF15803D), width: 2),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          Center(
-            child: Text(
-              _resendCountdown > 0
-                  ? 'Resend OTP in 00:${_resendCountdown.toString().padLeft(2, '0')}'
-                  : 'Didn\'t receive OTP? Tap below to resend',
-              style: GoogleFonts.inter(fontSize: 11.5, color: const Color(0xFF64748B)),
-            ),
-          ),
-          if (_resendCountdown == 0)
-            Center(
-              child: TextButton(
-                onPressed: _sendOtp,
-                child: const Text('Resend OTP via SMS'),
-              ),
-            ),
-          const SizedBox(height: 24),
-
-          // Verify Button
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: _isProcessingOtp ? null : _verifyOtpAndGrantConsent,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF15803D),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: _isProcessingOtp
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.verified_user, size: 18),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Verify & Grant Consent',
-                          style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Security note
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.shield, color: Color(0xFF15803D), size: 14),
-              const SizedBox(width: 6),
-              Text(
-                'Protected by UIDAI 2048-bit RSA Encryption & MeitY Standards',
-                style: GoogleFonts.inter(fontSize: 10, color: const Color(0xFF64748B)),
-              ),
-            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTabItem(int index, String label) {
-    final isSelected = _selectedTab == index;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _selectedTab = index),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 4,
-                      offset: const Offset(0, 1),
-                    )
-                  ]
-                : null,
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: GoogleFonts.inter(
-                fontSize: 11,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Step 2: Verified Aadhaar Card & Role Selection
   Widget _buildVerifiedProfileView() {
     final p = _verifiedProfile!;
     return SingleChildScrollView(
@@ -693,7 +578,7 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
                           Icon(Icons.verified, color: Colors.white, size: 12),
                           SizedBox(width: 4),
                           Text(
-                            'DIGILOCKER VERIFIED',
+                            'OFFICIAL UIDAI VERIFIED',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 9,
@@ -716,12 +601,12 @@ class _DigilockerWebviewModalState extends State<DigilockerWebviewModal> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'DOB: ${p.dob ?? "12/08/1982"} • Gender: ${p.gender ?? "Male"}',
+                  'DOB: ${p.dob ?? "Available"} • Gender: ${p.gender ?? "Male"}',
                   style: GoogleFonts.inter(color: Colors.white70, fontSize: 11),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  p.address ?? 'Vill. Taraori, Tehsil Nilokheri, Karnal, Haryana',
+                  p.address ?? 'Government of India e-KYC Verified Address',
                   style: GoogleFonts.inter(
                     color: Colors.white.withValues(alpha: 0.85),
                     fontSize: 10.5,
