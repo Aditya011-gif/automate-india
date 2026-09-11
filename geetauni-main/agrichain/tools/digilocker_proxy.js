@@ -35,9 +35,9 @@ function httpRequest(options, postData = null) {
   });
 }
 
-async function getAccessToken() {
+async function getAccessToken(force = false) {
   const now = Date.now();
-  if (cachedToken && now < tokenExpiry) {
+  if (!force && cachedToken && now < tokenExpiry) {
     return cachedToken;
   }
   const res = await httpRequest({
@@ -144,7 +144,10 @@ const server = http.createServer(async (req, res) => {
             '@entity': 'in.co.sandbox.kyc.digilocker.session.request',
             flow: clientPayload.flow || 'signin',
             doc_types: clientPayload.doc_types || ['aadhaar'],
-            redirect_url: clientPayload.redirect_url || 'https://sandbox.co.in'
+            redirect_url: clientPayload.redirect_url || 'https://sandbox.co.in',
+            options: {
+              verification_method: clientPayload.verification_method || ['aadhaar', 'mobile']
+            }
           });
 
           const sandboxRes = await httpRequest({
@@ -198,7 +201,7 @@ const server = http.createServer(async (req, res) => {
       const sessionId = pathname.replace('/api/digilocker/documents/', '').trim();
       const token = await getAccessToken();
 
-      const sandboxRes = await httpRequest({
+      let sandboxRes = await httpRequest({
         hostname: 'api.sandbox.co.in',
         path: `/kyc/digilocker/sessions/${sessionId}/documents/aadhaar`,
         method: 'GET',
@@ -208,6 +211,22 @@ const server = http.createServer(async (req, res) => {
           'x-api-version': API_VERSION
         }
       });
+
+      // If token expired, force refresh and retry once
+      if (sandboxRes.status === 401 || sandboxRes.status === 403) {
+        console.log('[Sandbox Proxy] Token expired, refreshing and retrying document fetch...');
+        const freshToken = await getAccessToken(true);
+        sandboxRes = await httpRequest({
+          hostname: 'api.sandbox.co.in',
+          path: `/kyc/digilocker/sessions/${sessionId}/documents/aadhaar`,
+          method: 'GET',
+          headers: {
+            'Authorization': freshToken,
+            'x-api-key': API_KEY,
+            'x-api-version': API_VERSION
+          }
+        });
+      }
 
       console.log(`[Sandbox Proxy] Document Fetch for ${sessionId} Status:`, sandboxRes.status);
 
@@ -226,6 +245,7 @@ const server = http.createServer(async (req, res) => {
         });
 
         const parsed = parseAadhaarXml(xmlDownload);
+        console.log(`[Sandbox Proxy] Successfully parsed Aadhaar for: ${parsed.name}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
           code: 200,
