@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -315,7 +316,53 @@ class DigitalContractSigner {
       ),
     );
 
-    return pdf.save();
+    final rawBytes = await pdf.save();
+    return await signPdfCryptographically(
+      rawBytes,
+      signerName: effectiveStamp.signerName,
+      signerRole: effectiveStamp.signerRole,
+      reason: 'Statutory Electronic Contract Execution (IT Act 2000)',
+    );
+  }
+
+  /// Optional cryptographic PKCS#7 / ByteRange signing via DigiLocker signing gateway
+  static Future<Uint8List> signPdfCryptographically(
+    Uint8List rawPdf, {
+    String? signerName,
+    String? signerRole,
+    String? reason,
+  }) async {
+    try {
+      final endpoints = [
+        'http://localhost:8088/api/pdf/sign',
+        'http://10.0.2.2:8088/api/pdf/sign',
+      ];
+      final body = jsonEncode({
+        'pdfBase64': base64Encode(rawPdf),
+        'signerName': signerName ?? 'Aadhaar Verified Signatory',
+        'signerRole': signerRole ?? 'Authorized Procurement Officer',
+        'reason': reason ?? 'Statutory Electronic Contract Execution (IT Act 2000)',
+      });
+
+      for (final ep in endpoints) {
+        try {
+          final res = await http
+              .post(
+                Uri.parse(ep),
+                headers: {'Content-Type': 'application/json'},
+                body: body,
+              )
+              .timeout(const Duration(milliseconds: 1500));
+          if (res.statusCode == 200) {
+            final data = jsonDecode(res.body);
+            if (data['signedPdfBase64'] != null) {
+              return base64Decode(data['signedPdfBase64']);
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return rawPdf;
   }
 
   static pw.Widget _buildHeader(pw.Font regularFont, pw.Font boldFont) {
